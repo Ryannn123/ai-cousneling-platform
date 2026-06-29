@@ -10,6 +10,7 @@ import { ValidationPipeline } from "../src/runtime/validationPipeline.js";
 import { CounselingTurnOrchestrator } from "../src/runtime/counselingTurnOrchestrator.js";
 import { AIExecutionClient } from "../src/runtime/aiExecutionClient.js";
 import { AIInterpretationClient } from "../src/runtime/aiInterpretationClient.js";
+import { InterpretationValidator } from "../src/runtime/interpretationValidator.js";
 
 test("boundary detection catches apply/register/payment/official action language", () => {
   const engine = new BoundaryEngine();
@@ -88,6 +89,118 @@ test("phase 4 extracts course university and pathway considering fields", async 
   assert.equal(flowDriving.pathwaysConsidering[0].pathway, "Foundation");
 });
 
+test("route profile sends no course or university direction to course/pathway exploration", async () => {
+  const app = new CounselingTurnOrchestrator();
+  const conversation = await app.createConversation();
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I got 5 credits. I don't know what course or university I want yet."
+  });
+
+  assert.equal(result.operatingContext.profileCompleteness, "minimum_complete");
+  assert.equal(result.operatingContext.minimumProfileRoute, "course_or_pathway_exploration");
+  assert.equal(result.operatingContext.currentMainState, "S3");
+  assert.equal(result.operatingContext.primaryCounselingAction, "A3");
+  assert.equal(result.operatingContext.recommendationReadiness, "R1");
+  assert.equal(result.operatingContext.studentPosture, "lost_or_confused");
+});
+
+test("route profile sends course-first student to university exploration and allows R2", async () => {
+  const app = new CounselingTurnOrchestrator();
+  const conversation = await app.createConversation();
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I got 5 credits and I want Psychology, but I don't know which university."
+  });
+
+  assert.equal(result.operatingContext.minimumProfileRoute, "university_exploration");
+  assert.equal(result.operatingContext.recommendationReadiness, "R2");
+  assert.equal(result.operatingContext.studentPosture, "course_first");
+  assert.equal(result.operatingContext.counselorResponseMode, "route_explanation");
+  assert.equal(result.skillSelection.selectedRuntimeSkill.name, "directional-recommendation");
+});
+
+test("route profile sends university-first student to course exploration in university context", async () => {
+  const app = new CounselingTurnOrchestrator();
+  const conversation = await app.createConversation();
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I got 5 credits and I want University A, but I don't know what course."
+  });
+
+  assert.equal(result.operatingContext.minimumProfileRoute, "course_exploration_within_university_context");
+  assert.equal(result.operatingContext.currentMainState, "S3");
+  assert.equal(result.operatingContext.primaryCounselingAction, "A3");
+  assert.equal(result.operatingContext.studentPosture, "university_first");
+});
+
+test("budget ranking and location are quality signals not minimum profile gates", async () => {
+  const app = new CounselingTurnOrchestrator();
+  const conversation = await app.createConversation();
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I prefer a budget university around KL with good ranking."
+  });
+
+  const accepted = result.acceptedInterpretation.accepted;
+  assert.equal(accepted.flowDriving.minimumProfileSignals.academicResultKnown, false);
+  assert.equal(result.operatingContext.profileCompleteness, "incomplete");
+  assert.deepEqual(accepted.qualityEnhancingSignals.map((signal) => signal.type), ["budget_sensitivity", "university_fit_preference", "location_preference"]);
+});
+
+test("student posture signals are accepted for common v1.2 counseling postures", async () => {
+  const client = new AIInterpretationClient({ provider: "openai" });
+  const cases = [
+    ["I'm just browsing.", "just_browsing"],
+    ["I already want Psychology, but I don't know which university.", "course_first"],
+    ["Which is better, University A or University B?", "comparison_oriented"],
+    ["This option seems best for me.", "decision_ready"]
+  ];
+
+  for (const [studentMessage, posture] of cases) {
+    const raw = await client.interpret({ conversationId: "c", turnId: "t", messageId: "m", studentMessage }, []);
+    const accepted = new InterpretationValidator().validate({ rawInterpretation: raw, turnInput: { conversationId: "c", turnId: "t", messageId: "m", studentMessage } });
+    assert.equal(accepted.accepted.studentPostureSignal.posture, posture);
+  }
+});
+
+test("route-incompatible skill metadata is rejected", async () => {
+  const skillsDir = await mkdtemp(path.join(tmpdir(), "route-skills-"));
+  const dir = path.join(skillsDir, "interest-exploration");
+  await mkdir(dir);
+  await writeFile(path.join(dir, "SKILL.md"), `---
+name: interest-exploration
+description: Test route skill
+version: 1.2.0
+artifact_type: runtime_skill
+status: approved
+owner: counseling_team
+applies_to_states:
+  - S3
+applies_to_actions:
+  - A3
+applies_to_zones:
+  - green
+applies_to_minimum_profile_routes:
+  - university_exploration
+allowed_memory_outputs:
+  - exploration_prompted
+---
+# route test
+`, "utf8");
+
+  const result = await new SkillControlService(skillsDir).select({
+    currentMainState: "S3",
+    primaryCounselingAction: "A3",
+    currentZone: "green",
+    recommendationReadiness: "R1",
+    profileCompleteness: "minimum_complete",
+    minimumProfileRoute: "course_or_pathway_exploration"
+  }, { allowedNextBehavior: "continue", requiredBoundaryRules: [] });
+
+  assert.ok(result.rejectedCandidates.some((candidate) => candidate.reason === "route_course_or_pathway_exploration_not_allowed"));
+});
+
 test("phase 4 rejects irrelevant quality noise", async () => {
   const app = new CounselingTurnOrchestrator();
   const conversation = await app.createConversation();
@@ -145,7 +258,7 @@ test("openai interpretation client passes InterpretationResult schema", async ()
   }
 });
 
-test("gemini interpretation client passes InterpretationResult schema", async () => {
+test("gemini interpretation client passes concise JSON schema without platform metadata", async () => {
   const originalFetch = globalThis.fetch;
   let capturedRequest;
   globalThis.fetch = async (url, options) => {
@@ -154,8 +267,9 @@ test("gemini interpretation client passes InterpretationResult schema", async ()
       ok: true,
       async json() {
         return {
-          candidates: [{
-            content: { parts: [{ text: JSON.stringify(interpretationFixture()) }] }
+          steps: [{
+            type: "model_output",
+            content: [{ type: "text", text: JSON.stringify(interpretationFixture()) }]
           }]
         };
       }
@@ -171,41 +285,35 @@ test("gemini interpretation client passes InterpretationResult schema", async ()
       studentMessage: "Psychology sounds interesting."
     }, []);
 
-    assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-test:generateContent/);
-    assert.equal(capturedRequest.body.generationConfig.responseFormat.text.mimeType, "application/json");
-    assert.ok(capturedRequest.body.generationConfig.responseFormat.text.schema.required.includes("flowDriving"));
-    assert.ok(capturedRequest.body.generationConfig.responseFormat.text.schema.properties.flowDriving.properties.coursesConsidering);
+    assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+    assert.equal(capturedRequest.body.model, "gemini-test");
+    assert.equal(capturedRequest.body.store, false);
+    assert.equal(capturedRequest.body.response_format.mime_type, "application/json");
+    assert.equal(capturedRequest.body.response_format.schema.type, "object");
+    assert.ok(capturedRequest.body.response_format.schema.required.includes("flowDriving"));
+    assert.equal(capturedRequest.body.response_format.schema.required.includes("conversationId"), false);
+    assert.equal(capturedRequest.body.response_format.schema.properties.conversationId, undefined);
+    assert.equal(capturedRequest.body.response_format.schema.properties.flowDriving.properties.coursesConsidering.items.properties.source, undefined);
+    assert.equal(capturedRequest.body.response_format.schema.properties.flowDriving.properties.minimumProfileSignals.properties.courseDirectionStatus.type, "string");
     assert.equal(result.flowDriving.coursesConsidering[0].courseOrProgram, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("gemini interpretation client retries legacy schema shape after 400", async () => {
+test("gemini concise interpretation response is hydrated before validation", async () => {
   const originalFetch = globalThis.fetch;
-  const capturedRequests = [];
-  globalThis.fetch = async (url, options) => {
-    capturedRequests.push({ url: String(url), body: JSON.parse(options.body) });
-    if (capturedRequests.length === 1) {
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
       return {
-        ok: false,
-        status: 400,
-        async text() {
-          return "Unknown name responseFormat";
-        }
+        steps: [{
+          type: "model_output",
+          content: [{ type: "text", text: JSON.stringify(conciseInterpretationFixture()) }]
+        }]
       };
     }
-    return {
-      ok: true,
-      async json() {
-        return {
-          candidates: [{
-            content: { parts: [{ text: JSON.stringify(interpretationFixture()) }] }
-          }]
-        };
-      }
-    };
-  };
+  });
 
   try {
     const client = new AIInterpretationClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
@@ -216,11 +324,42 @@ test("gemini interpretation client retries legacy schema shape after 400", async
       studentMessage: "Psychology sounds interesting."
     }, []);
 
-    assert.equal(capturedRequests.length, 2);
-    assert.equal(capturedRequests[0].body.generationConfig.responseFormat.text.mimeType, "application/json");
-    assert.equal(capturedRequests[1].body.generationConfig.responseMimeType, "application/json");
-    assert.ok(capturedRequests[1].body.generationConfig.responseSchema.required.includes("flowDriving"));
-    assert.equal(result.flowDriving.coursesConsidering[0].courseOrProgram, "Psychology");
+    assert.equal(result.conversationId, "conversation");
+    assert.equal(result.flowDriving.coursesConsidering[0].source, "current_message");
+    assert.equal(result.flowDriving.coursesConsidering[0].promotionRisk, "none");
+    assert.equal(result.flowDriving.minimumProfileSignals.courseDirectionStatus.value, "considering_some_courses");
+    assert.equal(result.qualityEnhancingSignals[0].evidence[0].quote, "people focused");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("gemini interpretation client surfaces live Gemini 400", async () => {
+  const originalFetch = globalThis.fetch;
+  const capturedRequests = [];
+  globalThis.fetch = async (url, options) => {
+    capturedRequests.push({ url: String(url), body: JSON.parse(options.body) });
+    return {
+      ok: false,
+      status: 400,
+      async text() {
+        return "schema rejected";
+      }
+    };
+  };
+
+  try {
+    const client = new AIInterpretationClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
+    await assert.rejects(client.interpret({
+      conversationId: "conversation",
+      turnId: "turn",
+      messageId: "message",
+      studentMessage: "Psychology sounds interesting."
+    }, []), /Gemini API returned 400: schema rejected/);
+
+    assert.equal(capturedRequests.length, 1);
+    assert.equal(capturedRequests[0].body.response_format.mime_type, "application/json");
+    assert.equal(capturedRequests[0].body.response_format.schema.type, "object");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -533,7 +672,7 @@ test("invalid AI official-action output is blocked before commit", async () => {
   assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
 });
 
-test("gemini provider calls generateContent and parses JSON output", async () => {
+test("gemini provider calls interactions and parses JSON output", async () => {
   const originalFetch = globalThis.fetch;
   let capturedRequest;
   globalThis.fetch = async (url, options) => {
@@ -542,24 +681,24 @@ test("gemini provider calls generateContent and parses JSON output", async () =>
       ok: true,
       async json() {
         return {
-          candidates: [{
-            content: {
-              parts: [{
-                text: JSON.stringify({
-                  response: { studentMessage: "Gemini response", responseIntent: "answer" },
-                  proposedContextUpdate: {},
-                  proposedOutputs: { memoryOutputs: [], recommendationOutputs: [] },
-                  validationFlags: {
-                    needsClarification: false,
-                    boundarySensitive: false,
-                    officialActionRisk: false,
-                    memoryWriteRequiresValidation: true,
-                    knowledgeUsed: false,
-                    knowledgeUncertain: false
-                  }
-                })
-              }]
-            }
+          steps: [{
+            type: "model_output",
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                response: { studentMessage: "Gemini response", responseIntent: "answer" },
+                proposedContextUpdate: {},
+                proposedOutputs: { memoryOutputs: [], recommendationOutputs: [] },
+                validationFlags: {
+                  needsClarification: false,
+                  boundarySensitive: false,
+                  officialActionRisk: false,
+                  memoryWriteRequiresValidation: true,
+                  knowledgeUsed: false,
+                  knowledgeUncertain: false
+                }
+              })
+            }]
           }]
         };
       }
@@ -574,25 +713,27 @@ test("gemini provider calls generateContent and parses JSON output", async () =>
       boundaryResult: { finalZone: "green" }
     });
 
-    assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-test:generateContent/);
-    assert.equal(capturedRequest.body.generationConfig.responseMimeType, "application/json");
-    assert.deepEqual(capturedRequest.body.generationConfig.responseSchema.required, ["response", "proposedContextUpdate", "proposedOutputs", "validationFlags"]);
-    assert.deepEqual(capturedRequest.body.generationConfig.responseSchema.properties.response.required, ["studentMessage", "responseIntent"]);
+    assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+    assert.equal(capturedRequest.body.model, "gemini-test");
+    assert.equal(capturedRequest.body.response_format.mime_type, "application/json");
+    assert.deepEqual(capturedRequest.body.response_format.schema.required, ["response", "proposedContextUpdate", "proposedOutputs", "validationFlags"]);
+    assert.deepEqual(capturedRequest.body.response_format.schema.properties.response.required, ["studentMessage", "responseIntent"]);
     assert.equal(result.response.studentMessage, "Gemini response");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("gemini malformed JSON shape falls back before runtime validation", async () => {
+test("gemini malformed JSON shape surfaces live provider error", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     ok: true,
     async json() {
-      return {
-        candidates: [{
-          content: {
-            parts: [{
+        return {
+          steps: [{
+            type: "model_output",
+            content: [{
+              type: "text",
               text: JSON.stringify({
                 response: "Please provide your full name and SPM examination year.",
                 status: "continue_normal_counseling",
@@ -603,24 +744,18 @@ test("gemini malformed JSON shape falls back before runtime validation", async (
                 nextStep: "Collect missing profile information."
               })
             }]
-          }
-        }]
-      };
+          }]
+        };
     }
   });
 
   try {
     const client = new AIExecutionClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
-    const result = await client.execute({
+    await assert.rejects(client.execute({
       studentMessage: "My SPM results are good.",
       operatingContext: { primaryCounselingAction: "A2" },
       boundaryResult: { finalZone: "green", allowedNextBehavior: "continue" }
-    });
-
-    assert.equal(result.response.responseIntent, "ask_clarification");
-    assert.match(result.response.studentMessage, /academic results/i);
-    assert.ok(result.proposedOutputs.memoryOutputs.some((output) => output.type === "ai_core_fallback_used"
-      && /invalid AIExecutionResult/.test(output.value.reason)));
+    }), /Gemini returned invalid AIExecutionResult/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -658,13 +793,49 @@ function interpretationFixture() {
       universitiesConsidering: [],
       pathwaysConsidering: [],
       minimumProfileSignals: {
-        hasAcademicResults: false,
-        hasUniversityPreferenceType: false,
-        hasPreferredLocation: false,
-        hasCourseInterest: true
+        academicResultKnown: false,
+        courseDirectionStatusKnown: true,
+        universityDirectionStatusKnown: false
       }
     },
     qualityEnhancingSignals: [],
+    boundaryCandidateSignals: [],
+    knowledgeNeedSignals: [],
+    contradictionSignals: [],
+    confidenceSummary: {
+      overallConfidence: "medium",
+      requiresClarification: false
+    }
+  };
+}
+
+function conciseInterpretationFixture() {
+  return {
+    flowDriving: {
+      coursesConsidering: [{
+        courseOrProgram: "Psychology",
+        status: "considering",
+        confidence: "high",
+        evidence: [{ quote: "Psychology sounds interesting" }]
+      }],
+      universitiesConsidering: [],
+      pathwaysConsidering: [],
+      minimumProfileSignals: {
+        academicResultKnown: false,
+        courseDirectionStatusKnown: true,
+        universityDirectionStatusKnown: false,
+        courseDirectionStatus: "considering_some_courses",
+        suggestedCounselingRoute: "collect_academic_result"
+      }
+    },
+    qualityEnhancingSignals: [{
+      type: "career_interest",
+      value: { interest: "people focused" },
+      usefulness: "high",
+      sensitivity: "none",
+      confidence: "medium",
+      evidence: [{ quote: "people focused" }]
+    }],
     boundaryCandidateSignals: [],
     knowledgeNeedSignals: [],
     contradictionSignals: [],

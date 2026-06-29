@@ -81,6 +81,12 @@ export class CounselingTurnOrchestrator {
       allowedMemoryOutputTypes: skillSelection.allowedMemoryOutputTypes,
       forbiddenMemoryOutputTypes: skillSelection.forbiddenMemoryOutputTypes,
       requiredResponseBehavior: behaviorForBoundary(boundaryResult),
+      counselorLikeGuidance: {
+        responseMode: operatingContext.counselorResponseMode,
+        responsePattern: ["reflect_student_situation", "guide_next_step", "ask_one_purposeful_question"],
+        studentPosture: operatingContext.studentPosture,
+        decisionSupportMode: operatingContext.decisionSupportMode
+      },
       requiredStructuredSchemaVersion: "phase4.prototype.v1",
       knowledgeContext: knowledgeAnswer ? {
         sources: knowledgeAnswer,
@@ -114,6 +120,7 @@ export class CounselingTurnOrchestrator {
         rejectedSignals: acceptedInterpretation.rejectedSignals,
         downgradedSignals: acceptedInterpretation.downgradedSignals,
         interpretationValidationEvents: acceptedInterpretation.validationEvents,
+        acceptedStudentPostureSignal: acceptedInterpretation.accepted.studentPostureSignal,
         fastBoundarySignals,
         boundaryResolutionInput: {
           fastBoundarySignals,
@@ -152,6 +159,7 @@ function interpretationSummary(acceptedInterpretation) {
     status: acceptedInterpretation.status,
     flowDriving: acceptedInterpretation.accepted.flowDriving,
     qualityEnhancingSignals: acceptedInterpretation.accepted.qualityEnhancingSignals,
+    studentPostureSignal: acceptedInterpretation.accepted.studentPostureSignal,
     boundaryCandidateSignals: acceptedInterpretation.accepted.boundaryCandidateSignals,
     knowledgeNeedSignals: acceptedInterpretation.accepted.knowledgeNeedSignals,
     contradictionSignals: acceptedInterpretation.accepted.contradictionSignals

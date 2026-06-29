@@ -1,6 +1,8 @@
 import { OFFICIAL_ACTION_OUTPUTS } from "./constants.js";
 
 const OFFICIAL_COMPLETION_LANGUAGE = /\b(application submitted|registered you|registration completed|seat reserved|payment confirmed|enrollment confirmed|updated crm)\b/i;
+const OLD_MINIMUM_PROFILE_LANGUAGE = /\b(prestige\/ranking|ranking.*budget|budget.*location|preferred study location)\b/i;
+const NON_OFFICIAL_LANGUAGE = /\bnot (an|official)|does not submit|does not register|not application|not.*registration|not.*payment|not.*seat|not.*crm/i;
 
 export class ValidationPipeline {
   validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedInterpretation }) {
@@ -27,6 +29,35 @@ export class ValidationPipeline {
         type: "official_action_language_blocked",
         severity: "error",
         message: "Student-facing response implied official completion."
+      });
+    }
+
+    if (operatingContext.primaryCounselingAction === "A2" && OLD_MINIMUM_PROFILE_LANGUAGE.test(finalResponse)) {
+      finalResponse = "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.";
+      status = "safe_fallback";
+      validationEvents.push({
+        type: "old_minimum_profile_language_blocked",
+        severity: "warning",
+        message: "Minimum-profile response used old ranking/budget/location gate wording."
+      });
+    }
+
+    if (operatingContext.counselorResponseMode === "milestone_confirmation" && !NON_OFFICIAL_LANGUAGE.test(finalResponse)) {
+      finalResponse = `${finalResponse} This is only a counseling preference, not an official application, registration, payment, enrollment, seat reservation, or CRM update.`;
+      status = status === "accepted" ? "downgraded" : status;
+      validationEvents.push({
+        type: "milestone_non_official_clarification_added",
+        severity: "warning",
+        message: "Confirmed-preference milestone needed explicit non-official clarification."
+      });
+    }
+
+    if (["reassuring_orientation", "route_explanation", "decision_support"].includes(operatingContext.counselorResponseMode)
+      && questionCount(finalResponse) > 1) {
+      validationEvents.push({
+        type: "too_many_questions_detected",
+        severity: "warning",
+        message: "Counselor-like flow should ask only one purposeful next question."
       });
     }
 
@@ -90,6 +121,10 @@ export class ValidationPipeline {
       validationEvents
     };
   }
+}
+
+function questionCount(text = "") {
+  return (text.match(/\?/g) || []).length;
 }
 
 function supportsConfirmedPreference(acceptedInterpretation) {

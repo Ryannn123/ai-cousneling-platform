@@ -180,6 +180,28 @@ function compatibilityFailure(metadata, context) {
     && !metadata.applies_to_recommendation_readiness.includes(context.recommendationReadiness)) {
     return `readiness_${context.recommendationReadiness}_not_allowed`;
   }
+  if (Array.isArray(metadata.applies_to_profile_completeness)
+    && metadata.applies_to_profile_completeness.length
+    && !metadata.applies_to_profile_completeness.includes(context.profileCompleteness)) {
+    return `profile_completeness_${context.profileCompleteness}_not_allowed`;
+  }
+  if (Array.isArray(metadata.applies_to_minimum_profile_routes)
+    && metadata.applies_to_minimum_profile_routes.length
+    && !metadata.applies_to_minimum_profile_routes.includes(context.minimumProfileRoute)) {
+    return `route_${context.minimumProfileRoute}_not_allowed`;
+  }
+  if (Array.isArray(metadata.student_postures_supported)
+    && metadata.student_postures_supported.length
+    && context.studentPosture
+    && !metadata.student_postures_supported.includes(context.studentPosture)) {
+    return `posture_${context.studentPosture}_not_allowed`;
+  }
+  if (Array.isArray(metadata.counselor_response_modes)
+    && metadata.counselor_response_modes.length
+    && context.counselorResponseMode
+    && !metadata.counselor_response_modes.includes(context.counselorResponseMode)) {
+    return `response_mode_${context.counselorResponseMode}_not_allowed`;
+  }
   return null;
 }
 

@@ -53,7 +53,13 @@ export const DEFAULT_CONTEXT = {
   currentZone: "green",
   primaryCounselingAction: "A1",
   profileCompleteness: "incomplete",
+  minimumProfileRoute: "collect_academic_result",
   recommendationReadiness: "R1",
   handoffStatus: "none",
-  nextBestCounselingMove: "Collect academic results, university preference type, and preferred location."
+  studentPosture: "just_browsing",
+  counselorResponseMode: "reassuring_orientation",
+  decisionSupportMode: null,
+  summaryCheckpointStatus: "not_required",
+  milestoneConfirmationStatus: "not_applicable",
+  nextBestCounselingMove: "Collect academic result plus course and university direction status."
 };

@@ -1,7 +1,7 @@
 ---
 name: directional-recommendation
 description: Give an R2 directional recommendation with assumptions, cautions, and medium confidence.
-version: 1.0.0
+version: 1.2.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
@@ -14,6 +14,25 @@ applies_to_zones:
   - yellow
 applies_to_recommendation_readiness:
   - R2
+  - R3
+applies_to_profile_completeness:
+  - minimum_complete
+  - rich_profile
+applies_to_minimum_profile_routes:
+  - university_exploration
+  - recommendation_or_validation
+student_postures_supported:
+  - course_first
+  - validation_seeking
+  - constraint_driven
+counselor_response_pattern:
+  - reflect
+  - guide
+  - ask_one_next_question
+counselor_response_modes:
+  - route_explanation
+  - summary_checkpoint
+  - standard
 allowed_memory_outputs:
   - active_student_direction
   - recommendation_discussed
@@ -35,4 +54,4 @@ required_boundary_rules:
 Give a useful but bounded recommendation.
 
 ## Response Pattern
-State recommendation, fit reasons, assumptions, cautions, confidence, and one next question.
+Reflect the student's current direction, state recommendation, fit reasons, assumptions, cautions, confidence, and one next useful fit question.

@@ -1,6 +1,8 @@
 const COURSES = ["psychology", "business", "computer science", "it", "design", "engineering", "accounting"];
 const PATHWAYS = ["foundation", "diploma", "a-level", "a level"];
-const UNIVERSITIES = ["demo metropolitan university", "demo valley university", "demo tech institute", "university a", "university b"];
+const UNIVERSITIES = ["demo metropolitan university", "demo valley university", "demo tech institute", "university a", "university b", "sunway", "taylor's", "taylors", "monash", "apu", "inti", "help", "utar"];
+const NO_COURSE_DIRECTION = /\b(don'?t know what course|do not know what course|no course|not sure what to study|don't know what to study|do not know what to study)\b/i;
+const NO_UNIVERSITY_DIRECTION = /\b(don'?t know which university|do not know which university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university)\b/i;
 
 export class AIInterpretationClient {
   constructor({
@@ -20,18 +22,7 @@ export class AIInterpretationClient {
 
   async interpret(turnInput, fastBoundarySignals = []) {
     if (!this.hasApiKey()) return mockInterpretation(turnInput, fastBoundarySignals);
-    try {
-      return await this.interpretLive(turnInput, fastBoundarySignals);
-    } catch (error) {
-      const fallback = mockInterpretation(turnInput, fastBoundarySignals);
-      fallback.confidenceSummary = {
-        ...fallback.confidenceSummary,
-        overallConfidence: "low",
-        fallbackUsed: true,
-        fallbackReason: error.message
-      };
-      return fallback;
-    }
+    return this.interpretLive(turnInput, fastBoundarySignals);
   }
 
   async interpretLive(turnInput, fastBoundarySignals) {
@@ -76,75 +67,45 @@ export class AIInterpretationClient {
     const text = payload.output_text || payload.output?.flatMap((item) => item.content || [])
       .find((content) => content.type === "output_text")?.text;
     if (!text) throw new Error("OpenAI interpretation response did not include output text");
-    return parseInterpretation(text, "OpenAI");
+    return parseInterpretation(text, "OpenAI", turnInput);
   }
 
   async interpretGeminiLive(turnInput, fastBoundarySignals) {
-    const modelPath = this.model.startsWith("models/") ? this.model : `models/${this.model}`;
-    const url = new URL(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent`);
-    url.searchParams.set("key", this.geminiApiKey);
-    const request = geminiInterpretationRequest(turnInput, fastBoundarySignals);
+    const url = new URL("https://generativelanguage.googleapis.com/v1beta/interactions");
+    const request = geminiInterpretationRequest(turnInput, fastBoundarySignals, this.model);
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.geminiApiKey },
       body: JSON.stringify(request)
     });
     if (!response.ok) {
-      const modernError = await responseText(response);
-      if (response.status === 400) {
-        const legacyResponse = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(toLegacyGeminiRequest(request))
-        });
-        if (legacyResponse.ok) return parseGeminiInterpretationResponse(legacyResponse);
-        const legacyError = await responseText(legacyResponse);
-        throw new Error(`Gemini API returned ${legacyResponse.status}. responseFormat error: ${modernError}; responseSchema error: ${legacyError}`);
-      }
-      throw new Error(`Gemini API returned ${response.status}: ${modernError}`);
+      throw new Error(`Gemini API returned ${response.status}: ${await responseText(response)}`);
     }
-    return parseGeminiInterpretationResponse(response);
+    return parseGeminiInterpretationResponse(response, turnInput);
   }
 }
 
-function geminiInterpretationRequest(turnInput, fastBoundarySignals) {
+function geminiInterpretationRequest(turnInput, fastBoundarySignals, model) {
   return {
-    systemInstruction: {
-      parts: [{
-        text: "Extract counseling interpretation as JSON. The result is a proposal, not truth. Do not create official application, registration, payment, enrollment, seat, or CRM truth."
-      }]
-    },
-    contents: [{
-      role: "user",
-      parts: [{ text: JSON.stringify({ ...turnInput, fastBoundarySignals }) }]
-    }],
-    generationConfig: {
-      responseFormat: {
-        text: {
-          mimeType: "application/json",
-          schema: geminiInterpretationResultSchema()
-        }
-      }
+    model: cleanGeminiModelName(model),
+    system_instruction: "Extract counseling interpretation as JSON. Do not include conversationId, turnId, messageId, source, or promotionRisk; the platform fills those fields. Include short evidence quotes for extracted signals. The result is a proposal, not truth. Do not create official application, registration, payment, enrollment, seat, or CRM truth.",
+    input: JSON.stringify({ ...turnInput, fastBoundarySignals }),
+    store: false,
+    response_format: {
+      type: "text",
+      mime_type: "application/json",
+      schema: geminiInterpretationResultSchema()
     }
   };
 }
 
-function toLegacyGeminiRequest(request) {
-  return {
-    ...request,
-    generationConfig: {
-      responseMimeType: request.generationConfig.responseFormat.text.mimeType,
-      responseSchema: request.generationConfig.responseFormat.text.schema
-    }
-  };
-}
-
-async function parseGeminiInterpretationResponse(response) {
+async function parseGeminiInterpretationResponse(response, turnInput) {
   const payload = await response.json();
-  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text).filter(Boolean).join("");
+  console.dir(payload, {depth: null, colors: true})
+  const text = geminiInteractionText(payload);
   if (!text) throw new Error("Gemini interpretation response did not include output text");
-  return parseInterpretation(text, "Gemini");
+  return parseInterpretation(text, "Gemini", turnInput);
 }
 
 async function responseText(response) {
@@ -157,15 +118,119 @@ async function responseText(response) {
 }
 
 function inferProvider(model) {
-  return String(model || "").toLowerCase().startsWith("gemini") ? "gemini" : "openai";
+  return cleanGeminiModelName(model).toLowerCase().startsWith("gemini") ? "gemini" : "openai";
 }
 
-function parseInterpretation(text, providerName) {
+function cleanGeminiModelName(model) {
+  return String(model || "gemini-3.5-flash").replace(/^models\//, "");
+}
+
+function geminiInteractionText(payload) {
+  if (typeof payload?.output_text === "string") return payload.output_text;
+  const output = payload?.steps?.filter((step) => step.type === "model_output").at(-1);
+  const text = output?.content?.filter((item) => item.type === "text").map((item) => item.text).filter(Boolean).join("");
+  if (text) return text;
+  const legacyText = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).filter(Boolean).join("");
+  return legacyText || JSON.stringify(payload);
+}
+
+function parseInterpretation(text, providerName, turnInput = {}) {
   try {
-    return JSON.parse(text);
+    return hydrateInterpretation(JSON.parse(text), turnInput);
   } catch {
     throw new Error(`${providerName} returned non-JSON InterpretationResult`);
   }
+}
+
+function hydrateInterpretation(raw, turnInput = {}) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const flowDriving = value.flowDriving && typeof value.flowDriving === "object" ? value.flowDriving : {};
+  const text = turnInput.studentMessage || "";
+  const hydratedFlowDriving = {
+    coursesConsidering: array(flowDriving.coursesConsidering).map((signal) => hydrateSignal(signal, text)),
+    universitiesConsidering: array(flowDriving.universitiesConsidering).map((signal) => hydrateSignal(signal, text)),
+    pathwaysConsidering: array(flowDriving.pathwaysConsidering).map((signal) => hydrateSignal(signal, text)),
+    minimumProfileSignals: hydrateMinimumProfileSignals(flowDriving.minimumProfileSignals, text)
+  };
+
+  for (const key of [
+    "confirmedCounselingCoursePreference",
+    "confirmedCounselingUniversityPreference",
+    "confirmedCounselingPathwayPreference",
+    "academicResult",
+    "preferenceStrengthCandidate",
+    "readinessToRegisterSignal"
+  ]) {
+    if (flowDriving[key]) hydratedFlowDriving[key] = hydrateSignal(flowDriving[key], text);
+  }
+
+  return {
+    conversationId: turnInput.conversationId || value.conversationId,
+    turnId: turnInput.turnId || value.turnId,
+    messageId: turnInput.messageId || value.messageId,
+    flowDriving: hydratedFlowDriving,
+    qualityEnhancingSignals: array(value.qualityEnhancingSignals).map((signal) => hydrateSignal(signal, text)),
+    ...(value.studentPostureSignal ? { studentPostureSignal: hydrateSignal(value.studentPostureSignal, text) } : {}),
+    boundaryCandidateSignals: array(value.boundaryCandidateSignals).map((signal) => hydrateSignal(signal, text, boundaryPromotionRisk(signal))),
+    knowledgeNeedSignals: array(value.knowledgeNeedSignals).map((signal) => hydrateSignal(signal, text)),
+    contradictionSignals: array(value.contradictionSignals).map((signal) => hydrateSignal(signal, text, "requires_confirmation")),
+    confidenceSummary: {
+      overallConfidence: value.confidenceSummary?.overallConfidence || "medium",
+      requiresClarification: Boolean(value.confidenceSummary?.requiresClarification),
+      ...(value.confidenceSummary?.clarificationReason ? { clarificationReason: value.confidenceSummary.clarificationReason } : {}),
+      ...(value.confidenceSummary?.highestRiskSignal ? { highestRiskSignal: value.confidenceSummary.highestRiskSignal } : {})
+    }
+  };
+}
+
+function hydrateMinimumProfileSignals(raw, text) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  return {
+    academicResultKnown: Boolean(value.academicResultKnown),
+    courseDirectionStatusKnown: Boolean(value.courseDirectionStatusKnown),
+    universityDirectionStatusKnown: Boolean(value.universityDirectionStatusKnown),
+    ...(value.academicResultStatus ? { academicResultStatus: hydrateSignalValue(value.academicResultStatus, text) } : {}),
+    ...(value.courseDirectionStatus ? { courseDirectionStatus: hydrateSignalValue(value.courseDirectionStatus, text) } : {}),
+    ...(value.universityDirectionStatus ? { universityDirectionStatus: hydrateSignalValue(value.universityDirectionStatus, text) } : {}),
+    ...(value.routeReadiness ? { routeReadiness: hydrateSignalValue(value.routeReadiness, text) } : {}),
+    ...(value.suggestedCounselingRoute ? { suggestedCounselingRoute: hydrateSignalValue(value.suggestedCounselingRoute, text) } : {})
+  };
+}
+
+function hydrateSignalValue(signal, text) {
+  if (signal && typeof signal === "object") return hydrateSignal(signal, text);
+  return hydrateSignal({ value: signal }, text);
+}
+
+function hydrateSignal(signal, text, promotionRisk = "none") {
+  const value = signal && typeof signal === "object" ? signal : {};
+  return {
+    ...value,
+    confidence: ["low", "medium", "high"].includes(value.confidence) ? value.confidence : "medium",
+    evidence: evidence(value.evidence, text),
+    source: value.source || "current_message",
+    promotionRisk: value.promotionRisk || promotionRisk
+  };
+}
+
+function evidence(value, text) {
+  const items = Array.isArray(value) ? value : value ? [value] : [];
+  const normalized = items
+    .map((item) => typeof item === "string" ? { quote: item } : item)
+    .filter((item) => item && typeof item.quote === "string" && item.quote.trim())
+    .map((item) => ({ quote: item.quote.slice(0, 160) }));
+  return normalized.length ? normalized : [{ quote: String(text || "No direct quote supplied.").slice(0, 160) }];
+}
+
+function boundaryPromotionRisk(signal = {}) {
+  if (signal.severityCandidate === "red" || ["official_action_request", "payment_or_seat_request", "exception_or_waiver_request", "human_requested_support"].includes(signal.type)) {
+    return "official_action_risk";
+  }
+  return "requires_confirmation";
+}
+
+function array(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function interpretationResultSchema() {
@@ -189,6 +254,7 @@ function interpretationResultSchema() {
       messageId: { type: "string" },
       flowDriving: flowDrivingSchema(),
       qualityEnhancingSignals: { type: "array", items: qualityEnhancingSignalSchema() },
+      studentPostureSignal: studentPostureSignalSchema(),
       boundaryCandidateSignals: { type: "array", items: boundaryCandidateSignalSchema() },
       knowledgeNeedSignals: { type: "array", items: knowledgeNeedSignalSchema() },
       contradictionSignals: { type: "array", items: contradictionSignalSchema() },
@@ -230,12 +296,16 @@ function flowDrivingSchema() {
       minimumProfileSignals: {
         type: "object",
         additionalProperties: false,
-        required: ["hasAcademicResults", "hasUniversityPreferenceType", "hasPreferredLocation", "hasCourseInterest"],
+        required: ["academicResultKnown", "courseDirectionStatusKnown", "universityDirectionStatusKnown"],
         properties: {
-          hasAcademicResults: { type: "boolean" },
-          hasUniversityPreferenceType: { type: "boolean" },
-          hasPreferredLocation: { type: "boolean" },
-          hasCourseInterest: { type: "boolean" }
+          academicResultKnown: { type: "boolean" },
+          courseDirectionStatusKnown: { type: "boolean" },
+          universityDirectionStatusKnown: { type: "boolean" },
+          academicResultStatus: signalValueSchema(["known", "unknown", "unclear"]),
+          courseDirectionStatus: signalValueSchema(["unknown", "considering_some_courses", "preferred_course_exists", "confirmed_counseling_course_preference"]),
+          universityDirectionStatus: signalValueSchema(["unknown", "considering_some_universities", "preferred_university_exists", "confirmed_counseling_university_preference"]),
+          routeReadiness: signalValueSchema(["minimum_profile_incomplete", "route_ready", "route_ready_with_optional_fit_gaps"]),
+          suggestedCounselingRoute: signalValueSchema(["collect_academic_result", "course_or_pathway_exploration", "university_exploration", "course_exploration_within_university_context", "recommendation_or_validation", "comparison_or_shortlist", "handoff_boundary_check"])
         }
       },
       preferenceStrengthCandidate: {
@@ -308,11 +378,34 @@ function qualityEnhancingSignalSchema() {
     required: [...baseRequired(), "type", "value", "usefulness", "sensitivity"],
     properties: {
       ...baseProperties(),
-      type: stringEnum(["concern", "budget_sensitivity", "location_preference", "family_influence", "learning_preference", "study_mode_preference", "timeline_preference", "career_interest", "personality_preference", "other"]),
+      type: stringEnum(["concern", "budget_sensitivity", "university_fit_preference", "location_preference", "family_influence", "learning_preference", "study_mode_preference", "timeline_preference", "career_interest", "personality_preference", "other"]),
       value: looseObjectSchema(),
       usefulness: stringEnum(["low", "medium", "high"]),
       sensitivity: stringEnum(["none", "possibly_sensitive", "sensitive"])
     }
+  };
+}
+
+function studentPostureSignalSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [...baseRequired(), "posture", "counselingImplication"],
+    properties: {
+      ...baseProperties(),
+      posture: stringEnum(["just_browsing", "lost_or_confused", "course_first", "university_first", "pathway_first", "comparison_oriented", "validation_seeking", "decision_ready", "indecisive", "constraint_driven", "human_help_seeking"]),
+      counselingImplication: stringEnum(["reassure_and_orient", "route_to_course_exploration", "route_to_university_exploration", "route_to_pathway_exploration", "compare_options", "validate_fit", "confirm_preference", "support_indecision", "handoff_boundary_check"]),
+      suggestedResponseMode: stringEnum(["reassuring_orientation", "route_explanation", "decision_support", "summary_checkpoint", "milestone_confirmation", "clarify_once", "handoff_safe"])
+    }
+  };
+}
+
+function signalValueSchema(values) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [...baseRequired(), "value"],
+    properties: { ...baseProperties(), value: stringEnum(values) }
   };
 }
 
@@ -390,32 +483,82 @@ function looseObjectSchema() {
 }
 
 function geminiInterpretationResultSchema() {
-  const schema = structuredClone(interpretationResultSchema());
-  replaceLooseGeminiObjects(schema);
-  stripUnsupportedGeminiSchemaFields(schema);
-  return schema;
+  return {
+    type: "object",
+    required: [
+      "flowDriving",
+      "qualityEnhancingSignals",
+      "boundaryCandidateSignals",
+      "knowledgeNeedSignals",
+      "contradictionSignals",
+      "confidenceSummary"
+    ],
+    properties: {
+      flowDriving: {
+        type: "object",
+        required: ["coursesConsidering", "universitiesConsidering", "pathwaysConsidering", "minimumProfileSignals"],
+        properties: {
+          coursesConsidering: { type: "array", items: geminiSignalSchema({ courseOrProgram: { type: "string" }, status: stringEnum(["considering", "preferred", "confirmed_counseling_preference", "rejected"]) }, ["courseOrProgram", "status"]) },
+          confirmedCounselingCoursePreference: geminiSignalSchema({ courseOrProgram: { type: "string" }, status: stringEnum(["confirmed_counseling_preference"]) }, ["courseOrProgram", "status"]),
+          universitiesConsidering: { type: "array", items: geminiSignalSchema({ university: { type: "string" }, status: stringEnum(["considering", "preferred", "confirmed_counseling_preference", "rejected"]) }, ["university", "status"]) },
+          confirmedCounselingUniversityPreference: geminiSignalSchema({ university: { type: "string" }, status: stringEnum(["confirmed_counseling_preference"]) }, ["university", "status"]),
+          pathwaysConsidering: { type: "array", items: geminiSignalSchema({ pathway: { type: "string" }, status: stringEnum(["considering", "preferred", "confirmed_counseling_preference", "rejected"]) }, ["pathway", "status"]) },
+          confirmedCounselingPathwayPreference: geminiSignalSchema({ pathway: { type: "string" }, status: stringEnum(["confirmed_counseling_preference"]) }, ["pathway", "status"]),
+          academicResult: geminiSignalSchema({ value: { type: "string" } }, ["value"]),
+          minimumProfileSignals: {
+            type: "object",
+            required: ["academicResultKnown", "courseDirectionStatusKnown", "universityDirectionStatusKnown"],
+            properties: {
+              academicResultKnown: { type: "boolean" },
+              courseDirectionStatusKnown: { type: "boolean" },
+              universityDirectionStatusKnown: { type: "boolean" },
+              academicResultStatus: stringEnum(["known", "unknown", "unclear"]),
+              courseDirectionStatus: stringEnum(["unknown", "considering_some_courses", "preferred_course_exists", "confirmed_counseling_course_preference"]),
+              universityDirectionStatus: stringEnum(["unknown", "considering_some_universities", "preferred_university_exists", "confirmed_counseling_university_preference"]),
+              routeReadiness: stringEnum(["minimum_profile_incomplete", "route_ready", "route_ready_with_optional_fit_gaps"]),
+              suggestedCounselingRoute: stringEnum(["collect_academic_result", "course_or_pathway_exploration", "university_exploration", "course_exploration_within_university_context", "recommendation_or_validation", "comparison_or_shortlist", "handoff_boundary_check"])
+            }
+          },
+          preferenceStrengthCandidate: geminiSignalSchema({ level: stringEnum(["L1", "L2", "L3", "L4", "L5"]), label: { type: "string" } }, ["level", "label"]),
+          readinessToRegisterSignal: geminiSignalSchema({ intent: stringEnum(["apply_now", "register_now", "enroll_now", "pay_now", "reserve_seat"]), triggerType: stringEnum(["H1", "H2", "H3"]) }, ["intent", "triggerType"])
+        }
+      },
+      qualityEnhancingSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["concern", "budget_sensitivity", "university_fit_preference", "location_preference", "family_influence", "learning_preference", "study_mode_preference", "timeline_preference", "career_interest", "personality_preference", "other"]), value: looseObjectSchema(), usefulness: stringEnum(["low", "medium", "high"]), sensitivity: stringEnum(["none", "possibly_sensitive", "sensitive"]) }, ["type", "value", "usefulness", "sensitivity"]) },
+      studentPostureSignal: geminiSignalSchema({ posture: stringEnum(["just_browsing", "lost_or_confused", "course_first", "university_first", "pathway_first", "comparison_oriented", "validation_seeking", "decision_ready", "indecisive", "constraint_driven", "human_help_seeking"]), counselingImplication: stringEnum(["reassure_and_orient", "route_to_course_exploration", "route_to_university_exploration", "route_to_pathway_exploration", "compare_options", "validate_fit", "confirm_preference", "support_indecision", "handoff_boundary_check"]), suggestedResponseMode: stringEnum(["reassuring_orientation", "route_explanation", "decision_support", "summary_checkpoint", "milestone_confirmation", "clarify_once", "handoff_safe"]) }, ["posture", "counselingImplication"]),
+      boundaryCandidateSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["ready_to_apply_or_register", "official_action_request", "payment_or_seat_request", "exception_or_waiver_request", "sensitive_context", "human_requested_support", "ambiguous_proceed_language"]), triggerType: stringEnum(["H1", "H2", "H3", "H4", "H5", "H6"]), severityCandidate: stringEnum(["yellow", "red"]), recommendedBehavior: stringEnum(["continue", "clarify_once", "handoff"]) }, ["type", "severityCandidate", "recommendedBehavior"]) },
+      knowledgeNeedSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["fees", "entry_requirements", "eligibility", "intake", "duration", "campus_location", "ranking", "scholarship", "specific_program_fact", "specific_university_fact", "pathway_requirement"]), query: { type: "string" }, decisionCriticality: stringEnum(["not_decision_critical", "possibly_decision_critical", "decision_critical"]) }, ["type", "query", "decisionCriticality"]) },
+      contradictionSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["correction", "direction_change", "preference_downgrade", "constraint_conflict", "profile_conflict"]), conflictsWith: looseObjectSchema(), newClaim: looseObjectSchema(), recommendedBehavior: stringEnum(["update_current_truth", "preserve_history_and_switch_active_direction", "ask_clarification"]) }, ["type", "newClaim", "recommendedBehavior"]) },
+      confidenceSummary: {
+        type: "object",
+        required: ["overallConfidence", "requiresClarification"],
+        properties: {
+          overallConfidence: stringEnum(["low", "medium", "high"]),
+          requiresClarification: { type: "boolean" },
+          clarificationReason: { type: "string" },
+          highestRiskSignal: { type: "string" }
+        }
+      }
+    }
+  };
 }
 
-function replaceLooseGeminiObjects(value) {
-  if (!value || typeof value !== "object") return;
-  if (value.type === "object" && value.additionalProperties === true && !value.properties) {
-    value.properties = {
-      summary: { type: "string" }
-    };
-  }
-  for (const child of Object.values(value)) {
-    if (Array.isArray(child)) child.forEach(replaceLooseGeminiObjects);
-    else replaceLooseGeminiObjects(child);
-  }
-}
-
-function stripUnsupportedGeminiSchemaFields(value) {
-  if (!value || typeof value !== "object") return;
-  delete value.additionalProperties;
-  for (const child of Object.values(value)) {
-    if (Array.isArray(child)) child.forEach(stripUnsupportedGeminiSchemaFields);
-    else stripUnsupportedGeminiSchemaFields(child);
-  }
+function geminiSignalSchema(properties = {}, required = []) {
+  return {
+    type: "object",
+    required: [...required, "confidence", "evidence"],
+    properties: {
+      ...properties,
+      confidence: stringEnum(["low", "medium", "high"]),
+      evidence: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["quote"],
+          properties: { quote: { type: "string" } }
+        }
+      }
+    }
+  };
 }
 
 function mockInterpretation(turnInput, fastBoundarySignals) {
@@ -446,6 +589,7 @@ function mockInterpretation(turnInput, fastBoundarySignals) {
   const knowledgeNeedSignals = knowledgeNeeds(text);
   const contradictionSignals = contradictions(text);
   const qualityEnhancingSignals = qualitySignals(text);
+  const studentPostureSignal = postureSignal(text, flowDriving);
 
   return {
     conversationId: turnInput.conversationId,
@@ -453,6 +597,7 @@ function mockInterpretation(turnInput, fastBoundarySignals) {
     messageId: turnInput.messageId,
     flowDriving,
     qualityEnhancingSignals,
+    ...(studentPostureSignal ? { studentPostureSignal } : {}),
     boundaryCandidateSignals,
     knowledgeNeedSignals,
     contradictionSignals,
@@ -471,11 +616,11 @@ function mockInterpretation(turnInput, fastBoundarySignals) {
 function courseSignals(text) {
   const lower = text.toLowerCase();
   return COURSES
-    .filter((course) => lower.includes(course))
+    .filter((course) => includesTerm(lower, course))
     .map((course) => ({
       ...baseSignal(text, course),
       courseOrProgram: course === "it" ? "IT" : title(course),
-      status: /\bprefer\b/i.test(text) && lower.includes(course) ? "preferred" : "considering"
+      status: /\bprefer\b/i.test(text) && includesTerm(lower, course) ? "preferred" : "considering"
     }));
 }
 
@@ -488,11 +633,11 @@ function confirmedCourseSignal(text) {
 function universitySignals(text) {
   const lower = text.toLowerCase();
   return UNIVERSITIES
-    .filter((university) => lower.includes(university))
+    .filter((university) => includesTerm(lower, university))
     .map((university) => ({
       ...baseSignal(text, university),
-      university: title(university),
-      status: /\bprefer\b/i.test(text) && lower.includes(university) ? "preferred" : "considering"
+      university: university.includes("university ") ? title(university) : title(university).replace(/\bApu\b/, "APU").replace(/\bUtar\b/, "UTAR"),
+      status: /\bprefer\b/i.test(text) && includesTerm(lower, university) ? "preferred" : "considering"
     }));
 }
 
@@ -529,12 +674,38 @@ function academicResultSignal(text) {
 }
 
 function minimumProfileSignals(text) {
+  const academicResultKnown = /\b(spm|a[- ]?level|foundation|diploma|cgpa|gpa|result|results|grades?|credits?)\b/i.test(text);
+  const courseSignalsFound = courseSignals(text);
+  const universitySignalsFound = universitySignals(text);
+  const courseDirectionKnown = courseSignalsFound.length > 0 || NO_COURSE_DIRECTION.test(text);
+  const universityDirectionKnown = universitySignalsFound.length > 0 || NO_UNIVERSITY_DIRECTION.test(text);
+  const courseStatus = courseSignalsFound.some((signal) => signal.status === "preferred")
+    ? "preferred_course_exists"
+    : courseSignalsFound.length ? "considering_some_courses" : "unknown";
+  const universityStatus = universitySignalsFound.some((signal) => signal.status === "preferred")
+    ? "preferred_university_exists"
+    : universitySignalsFound.length ? "considering_some_universities" : "unknown";
+  const route = suggestedRoute(academicResultKnown, courseStatus, universityStatus);
   return {
-    hasAcademicResults: /\b(spm|a[- ]?level|foundation|diploma|cgpa|gpa|result|results|grades?|credits?)\b/i.test(text),
-    hasUniversityPreferenceType: /\b(ranking|prestige|budget|affordable|value|cheap|low cost)\b/i.test(text),
-    hasPreferredLocation: /\b(kl|kuala lumpur|selangor|penang|johor|malaysia|overseas|nearby|location)\b/i.test(text),
-    hasCourseInterest: COURSES.some((course) => text.toLowerCase().includes(course))
+    academicResultKnown,
+    courseDirectionStatusKnown: courseDirectionKnown,
+    universityDirectionStatusKnown: universityDirectionKnown,
+    academicResultStatus: signalValue(text, academicResultKnown ? "known" : "unknown"),
+    courseDirectionStatus: signalValue(text, courseStatus),
+    universityDirectionStatus: signalValue(text, universityStatus),
+    routeReadiness: signalValue(text, academicResultKnown && courseDirectionKnown && universityDirectionKnown ? "route_ready" : "minimum_profile_incomplete"),
+    suggestedCounselingRoute: signalValue(text, route)
   };
+}
+
+function suggestedRoute(academicResultKnown, courseStatus, universityStatus) {
+  if (!academicResultKnown) return "collect_academic_result";
+  const hasCourse = courseStatus !== "unknown";
+  const hasUniversity = universityStatus !== "unknown";
+  if (!hasCourse && !hasUniversity) return "course_or_pathway_exploration";
+  if (hasCourse && !hasUniversity) return "university_exploration";
+  if (!hasCourse && hasUniversity) return "course_exploration_within_university_context";
+  return "recommendation_or_validation";
 }
 
 function preferenceStrengthSignal(text) {
@@ -620,6 +791,9 @@ function qualitySignals(text) {
   if (/\b(budget|affordable|cheap|low cost|value)\b/i.test(text)) {
     signals.push({ ...quality("budget_sensitivity", text, { preference: "budget_or_value" }), usefulness: "high" });
   }
+  if (/\b(ranking|prestige|reputation)\b/i.test(text)) {
+    signals.push({ ...quality("university_fit_preference", text, { preference: "ranking_or_prestige" }), usefulness: "high" });
+  }
   if (/\b(kl|kuala lumpur|selangor|penang|johor|nearby|near campus)\b/i.test(text)) {
     signals.push({ ...quality("location_preference", text, { location: text.match(/\b(kl|kuala lumpur|selangor|penang|johor|nearby)\b/i)?.[0] || "stated_location" }), usefulness: "high" });
   }
@@ -636,6 +810,41 @@ function qualitySignals(text) {
     signals.push({ ...quality("other", text, { trivia: text }), usefulness: "low" });
   }
   return signals;
+}
+
+function postureSignal(text, flowDriving) {
+  const lower = text.toLowerCase();
+  if (/\b(human counselor|human counsellor|real person|talk to.*human)\b/i.test(text)) {
+    return posture(text, "human_help_seeking", "handoff_boundary_check", "handoff_safe");
+  }
+  if (/\b(just browsing|browsing only|looking around)\b/i.test(text)) return posture(text, "just_browsing", "reassure_and_orient", "reassuring_orientation");
+  if (/\b(compare|versus|vs|better|between)\b/i.test(text)) return posture(text, "comparison_oriented", "compare_options", "decision_support");
+  if (/\b(my choice|choose|chosen|this option seems best|let'?s go with)\b/i.test(text)) return posture(text, "decision_ready", "confirm_preference", "milestone_confirmation");
+  if ((flowDriving.coursesConsidering || []).length && (NO_UNIVERSITY_DIRECTION.test(text) || lower.includes("which university"))) {
+    return posture(text, "course_first", "route_to_university_exploration", "route_explanation");
+  }
+  if ((flowDriving.universitiesConsidering || []).length && (NO_COURSE_DIRECTION.test(text) || lower.includes("what course"))) {
+    return posture(text, "university_first", "route_to_course_exploration", "route_explanation");
+  }
+  if (/\b(confused|undecided|not sure|don'?t know what course|do not know what course)\b/i.test(text)) return posture(text, "lost_or_confused", "reassure_and_orient", "reassuring_orientation");
+  if ((flowDriving.pathwaysConsidering || []).length) return posture(text, "pathway_first", "route_to_pathway_exploration", "route_explanation");
+  return undefined;
+}
+
+function posture(text, postureValue, counselingImplication, suggestedResponseMode) {
+  return {
+    ...baseSignal(text, text, "high"),
+    posture: postureValue,
+    counselingImplication,
+    suggestedResponseMode
+  };
+}
+
+function signalValue(text, value) {
+  return {
+    ...baseSignal(text, text, "high"),
+    value
+  };
 }
 
 function quality(type, text, value) {
@@ -669,4 +878,12 @@ function dedupeSignals(signals, key) {
 
 function title(value) {
   return value.split(/\s+/).map((word) => word.toUpperCase() === "IT" ? "IT" : `${word[0].toUpperCase()}${word.slice(1)}`).join(" ");
+}
+
+function includesTerm(lowerText, term) {
+  return new RegExp(`\\b${escapeRegex(term.toLowerCase()).replace(/\\ /g, "\\s+")}\\b`).test(lowerText);
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

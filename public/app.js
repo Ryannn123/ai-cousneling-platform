@@ -11,6 +11,9 @@ const els = {
   stateValue: document.querySelector("#stateValue"),
   overlayValue: document.querySelector("#overlayValue"),
   actionValue: document.querySelector("#actionValue"),
+  routeValue: document.querySelector("#routeValue"),
+  postureValue: document.querySelector("#postureValue"),
+  responseModeValue: document.querySelector("#responseModeValue"),
   readinessValue: document.querySelector("#readinessValue"),
   preferenceValue: document.querySelector("#preferenceValue"),
   handoffValue: document.querySelector("#handoffValue"),
@@ -56,7 +59,7 @@ async function startConversation() {
   conversationId = conversation.conversationId;
   els.conversationId.textContent = conversationId;
   els.messages.replaceChildren();
-  addMessage("assistant", "Hi, I can help you explore study options. Tell me your results, preferred location, and whether you care more about ranking/prestige or budget/value.");
+  addMessage("assistant", "Hi, I can help you explore study options. Tell me your academic result, whether you already have a course in mind, and whether you already have a university in mind.");
   renderContext(conversation.operatingContext);
   setBusy(false);
 }
@@ -105,6 +108,9 @@ function renderContext(context) {
   els.stateValue.textContent = label(context.currentMainState, labels.states);
   els.overlayValue.textContent = context.overlayState ? label(context.overlayState, labels.states) : "none";
   els.actionValue.textContent = label(context.primaryCounselingAction, labels.actions);
+  els.routeValue.textContent = context.minimumProfileRoute || "none";
+  els.postureValue.textContent = context.studentPosture || "none";
+  els.responseModeValue.textContent = context.counselorResponseMode || "none";
   els.readinessValue.textContent = label(context.recommendationReadiness, labels.readiness);
   els.preferenceValue.textContent = context.preferenceStrength || "none";
   els.handoffValue.textContent = context.handoffStatus;

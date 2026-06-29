@@ -16,19 +16,7 @@ export class AIExecutionClient {
 
   async execute(executionContext) {
     if (!this.hasApiKey()) return mockExecution(executionContext);
-    try {
-      return await this.executeLive(executionContext);
-    } catch (error) {
-      const fallback = mockExecution(executionContext);
-      fallback.validationFlags.knowledgeUncertain = true;
-      fallback.proposedOutputs.memoryOutputs.push({
-        type: "ai_core_fallback_used",
-        value: { reason: error.message },
-        confidence: "low",
-        evidence: `Live ${this.provider} call failed; mock fallback used.`
-      });
-      return fallback;
-    }
+    return this.executeLive(executionContext);
   }
 
   async executeLive(executionContext) {
@@ -52,7 +40,7 @@ export class AIExecutionClient {
         input: [
           {
             role: "system",
-            content: "You are a bounded autonomous pre-registration education counselor. Return only JSON matching the requested schema. Do not claim official actions are completed."
+            content: "You are a bounded autonomous pre-registration education counselor. Return only JSON matching the requested schema. Use counselor-like flow: reflect the student's situation, guide the next step, and ask only one purposeful question when needed. Do not claim official actions are completed."
           },
           {
             role: "user",
@@ -82,26 +70,20 @@ export class AIExecutionClient {
   }
 
   async executeGeminiLive(executionContext) {
-    const modelPath = this.model.startsWith("models/") ? this.model : `models/${this.model}`;
-    const url = new URL(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent`);
-    url.searchParams.set("key", this.geminiApiKey);
+    const url = new URL("https://generativelanguage.googleapis.com/v1beta/interactions");
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.geminiApiKey },
       body: JSON.stringify({
-        systemInstruction: {
-          parts: [{
-            text: "You are a bounded autonomous pre-registration education counselor. Return only JSON matching the requested schema. Do not claim official actions are completed."
-          }]
-        },
-        contents: [{
-          role: "user",
-          parts: [{ text: JSON.stringify(executionContext) }]
-        }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: geminiAiExecutionResultSchema()
+        model: cleanGeminiModelName(this.model),
+        system_instruction: "You are a bounded autonomous pre-registration education counselor. Return only JSON matching the requested schema. Use counselor-like flow: reflect the student's situation, guide the next step, and ask only one purposeful question when needed. Do not claim official actions are completed.",
+        input: JSON.stringify(executionContext),
+        store: false,
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: geminiAiExecutionResultSchema()
         }
       })
     });
@@ -111,17 +93,27 @@ export class AIExecutionClient {
     }
 
     const payload = await response.json();
-    const text = payload.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text)
-      .filter(Boolean)
-      .join("");
+    const text = geminiInteractionText(payload);
     if (!text) throw new Error("Gemini response did not include output text");
     return parseAiExecutionResult(text, "Gemini");
   }
 }
 
 function inferProvider(model) {
-  return String(model || "").toLowerCase().startsWith("gemini") ? "gemini" : "openai";
+  return cleanGeminiModelName(model).toLowerCase().startsWith("gemini") ? "gemini" : "openai";
+}
+
+function cleanGeminiModelName(model) {
+  return String(model || "gemini-3.5-flash").replace(/^models\//, "");
+}
+
+function geminiInteractionText(payload) {
+  if (typeof payload?.output_text === "string") return payload.output_text;
+  const output = payload?.steps?.filter((step) => step.type === "model_output").at(-1);
+  const text = output?.content?.filter((item) => item.type === "text").map((item) => item.text).filter(Boolean).join("");
+  if (text) return text;
+  const legacyText = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).filter(Boolean).join("");
+  return legacyText || JSON.stringify(payload);
 }
 
 function parseAiExecutionResult(text, providerName) {
@@ -223,18 +215,18 @@ function mockExecution(executionContext) {
   }
 
   if (operatingContext.primaryCounselingAction === "A2") {
-    return result("ask_clarification", "To recommend usefully, I need three things: your academic results, whether you prefer prestige/ranking or budget/value, and your preferred study location.", {
+    return result("ask_clarification", "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.", {
       memoryOutputs: [{ type: "minimum_profile_requested", value: {}, confidence: "high", evidence: "Minimum profile incomplete." }]
     }, baseFlags);
   }
 
   if (operatingContext.primaryCounselingAction === "A6") {
-    return result("recommend", "Based on your minimum profile, I can make a directional recommendation with medium confidence. Psychology or Business could fit depending on whether you want people-focused work or broader commercial options. My assumption is that location and value matter, so I would compare affordable KL/Selangor options next.", {
+    return result("recommend", "You already have enough direction for a first counseling recommendation. Based on what you shared, I can make a medium-confidence suggestion and then refine it with one fit question. Psychology could fit if you want people-focused work; Business stays broader if you want management, marketing, or finance flexibility. Which matters more to you now: career direction, budget, or location?", {
       proposedContextUpdate: { currentMainState: "S4", recommendationReadiness: "R2" },
       recommendationOutputs: [{
-        option: "R2 directional shortlist: Psychology or Business in KL/Selangor value-focused universities",
-        fitReasons: ["Matches stated course interest", "Uses known location/preference signals"],
-        assumptions: ["Career goal and budget amount are not fully confirmed"],
+        option: "R2 directional shortlist based on current course or pathway direction",
+        fitReasons: ["Uses the student's academic result and stated direction"],
+        assumptions: ["University-fit details can still refine the recommendation"],
         cautions: ["Counseling recommendation only; not admission or registration approval"],
         confidence: "medium"
       }]
@@ -242,20 +234,20 @@ function mockExecution(executionContext) {
   }
 
   if (operatingContext.primaryCounselingAction === "A7") {
-    return result("compare", "For a shortlist, Psychology is stronger if you want counseling, HR, or human behavior. Business is broader if you want management, marketing, or finance flexibility. I would keep both shortlisted until we confirm career direction.", {
+    return result("compare", "You are comparing directions, so the useful move is to narrow by trade-off instead of adding more options. Psychology is stronger if you want counseling, HR, or human behavior. Business is broader if you want management, marketing, or finance flexibility. Which trade-off matters more to you: focused interest or broader flexibility?", {
       proposedContextUpdate: { currentMainState: "S5" },
       memoryOutputs: [{ type: "shortlist", value: { options: ["Psychology", "Business"] }, confidence: "medium", evidence: studentMessage }]
     }, baseFlags);
   }
 
   if (operatingContext.primaryCounselingAction === "A9") {
-    return result("confirm_preference", "I can record that as your counseling preference for now. This does not submit an application or register you; it only keeps your preferred direction clear for the next counseling step.", {
+    return result("confirm_preference", "For counseling purposes, I can treat this as your current preferred direction. This is not an application, registration, payment, enrollment, seat reservation, or CRM update. It just gives us a clear counseling milestone; from here, you can compare one final alternative, take time to think, or speak with a human counselor for official next steps.", {
       proposedContextUpdate: { currentMainState: "S6", preferenceStrength: "L4" },
       memoryOutputs: [{ type: "confirmed_counseling_preference", value: { direction: studentMessage }, confidence: "medium", evidence: studentMessage }]
     }, baseFlags);
   }
 
-  return result("answer", "Tell me what course area you are considering, and I will help narrow it using your results, location, and university preference.", {
+  return result("answer", "It sounds like you are still finding the right direction. We can start broad and use your strengths, disliked subjects, and career interest to narrow the route before talking about university fit. What kind of subjects or work do you usually prefer?", {
     proposedContextUpdate: { currentMainState: "S3", primaryCounselingAction: "A3" },
     memoryOutputs: [{ type: "exploration_prompted", value: {}, confidence: "medium", evidence: studentMessage }]
   }, baseFlags);
@@ -330,14 +322,14 @@ function geminiAiExecutionResultSchema() {
           responseIntent: { type: "string", enum: ["answer", "ask_clarification", "recommend", "compare", "confirm_preference", "handoff"] }
         }
       },
-      proposedContextUpdate: { type: "object" },
+      proposedContextUpdate: { type: "object", additionalProperties: true },
       proposedOutputs: {
         type: "object",
         required: ["memoryOutputs", "recommendationOutputs"],
         properties: {
-          memoryOutputs: { type: "array", items: { type: "object" } },
-          recommendationOutputs: { type: "array", items: { type: "object" } },
-          handoffOutput: { type: "object", nullable: true }
+          memoryOutputs: { type: "array", items: { type: "object", additionalProperties: true } },
+          recommendationOutputs: { type: "array", items: { type: "object", additionalProperties: true } },
+          handoffOutput: { type: "object", additionalProperties: true }
         }
       },
       validationFlags: {

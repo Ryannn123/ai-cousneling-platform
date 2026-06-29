@@ -24,6 +24,9 @@ export class InterpretationValidator {
     validateOptionalSignal("flowDriving.academicResult", accepted.flowDriving.academicResult, rejectedSignals, validationEvents);
     validateOptionalSignal("flowDriving.preferenceStrengthCandidate", accepted.flowDriving.preferenceStrengthCandidate, rejectedSignals, validationEvents);
     validateOptionalSignal("flowDriving.readinessToRegisterSignal", accepted.flowDriving.readinessToRegisterSignal, rejectedSignals, validationEvents);
+    if (accepted.studentPostureSignal && !validatePostureSignal(accepted.studentPostureSignal, rejectedSignals, validationEvents)) {
+      delete accepted.studentPostureSignal;
+    }
 
     accepted.qualityEnhancingSignals = accepted.qualityEnhancingSignals.filter((signal, index) => {
       if (signal.usefulness === "low") {
@@ -50,6 +53,16 @@ export class InterpretationValidator {
           message: `Fast boundary signal preserved: ${fastSignal.type}.`
         });
       }
+    }
+
+    if (accepted.studentPostureSignal?.posture === "human_help_seeking"
+      && !accepted.boundaryCandidateSignals.some((signal) => signal.type === "human_requested_support")) {
+      accepted.boundaryCandidateSignals.push(fromPostureBoundarySignal(accepted.studentPostureSignal));
+      validationEvents.push({
+        type: "posture_boundary_signal_preserved",
+        severity: "warning",
+        message: "Human-help posture preserved as H6 boundary candidate."
+      });
     }
 
     accepted.knowledgeNeedSignals = accepted.knowledgeNeedSignals.filter((signal, index) => validateSignal(`knowledgeNeedSignals.${index}`, signal, rejectedSignals, validationEvents));
@@ -109,6 +122,7 @@ function normalize(raw, turnInput = {}) {
       ...(flowDriving.readinessToRegisterSignal ? { readinessToRegisterSignal: flowDriving.readinessToRegisterSignal } : {})
     },
     qualityEnhancingSignals: array(value.qualityEnhancingSignals),
+    ...(value.studentPostureSignal ? { studentPostureSignal: value.studentPostureSignal } : {}),
     boundaryCandidateSignals: array(value.boundaryCandidateSignals),
     knowledgeNeedSignals: array(value.knowledgeNeedSignals),
     contradictionSignals: array(value.contradictionSignals),
@@ -146,6 +160,17 @@ function validateSignal(path, signal, rejectedSignals, validationEvents) {
   return true;
 }
 
+function validatePostureSignal(signal, rejectedSignals, validationEvents) {
+  const validPostures = new Set(["just_browsing", "lost_or_confused", "course_first", "university_first", "pathway_first", "comparison_oriented", "validation_seeking", "decision_ready", "indecisive", "constraint_driven", "human_help_seeking"]);
+  if (!validateSignal("studentPostureSignal", signal, rejectedSignals, validationEvents)) return false;
+  if (!validPostures.has(signal.posture)) {
+    reject(rejectedSignals, validationEvents, "studentPostureSignal", signal, "posture_invalid");
+    return false;
+  }
+  validationEvents.push({ type: "student_posture_validated", severity: "info", message: "Student posture accepted as advisory context." });
+  return true;
+}
+
 function downgradeUnsupportedConfirmation(accepted, label, listKey, fieldKey) {
   const confirmedKey = `confirmedCounseling${label}Preference`;
   const confirmed = accepted.flowDriving[confirmedKey];
@@ -179,6 +204,19 @@ function fromFastBoundarySignal(signal) {
     evidence: [{ quote: signal.matchedText }],
     source: "current_message",
     promotionRisk: signal.severityCandidate === "red" ? "official_action_risk" : "requires_confirmation"
+  };
+}
+
+function fromPostureBoundarySignal(signal) {
+  return {
+    type: "human_requested_support",
+    triggerType: "H6",
+    severityCandidate: "red",
+    recommendedBehavior: "handoff",
+    confidence: signal.confidence || "medium",
+    evidence: signal.evidence,
+    source: signal.source,
+    promotionRisk: "official_action_risk"
   };
 }
 
