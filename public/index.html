@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bounded Counseling Prototype</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <section class="chat-panel" aria-label="Student chat">
+        <header class="topbar">
+          <div>
+            <h1>Bounded Counseling Prototype</h1>
+            <p id="conversationId">Starting conversation...</p>
+          </div>
+          <button id="newConversation" type="button">New</button>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <form id="turnForm" class="composer">
+          <textarea id="studentMessage" name="studentMessage" rows="3" placeholder="Type as a pre-registration student..." required></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </section>
+
+      <aside class="debug-panel" aria-label="Runtime debug">
+        <div class="debug-header">
+          <h2>Runtime</h2>
+          <span id="zoneBadge" class="badge">green</span>
+        </div>
+
+        <dl class="state-grid">
+          <div><dt>State</dt><dd id="stateValue">S1</dd></div>
+          <div><dt>Overlay</dt><dd id="overlayValue">none</dd></div>
+          <div><dt>Action</dt><dd id="actionValue">A1</dd></div>
+          <div><dt>Readiness</dt><dd id="readinessValue">R1</dd></div>
+          <div><dt>Preference</dt><dd id="preferenceValue">none</dd></div>
+          <div><dt>Handoff</dt><dd id="handoffValue">none</dd></div>
+        </dl>
+
+        <section>
+          <h3>Selected Skills</h3>
+          <pre id="skillsOutput">{}</pre>
+        </section>
+
+        <section>
+          <h3>Accepted Outputs</h3>
+          <pre id="acceptedOutput">{}</pre>
+        </section>
+
+        <section>
+          <h3>Accepted Interpretation</h3>
+          <pre id="acceptedInterpretationOutput">{}</pre>
+        </section>
+
+        <section>
+          <h3>Blocked Outputs</h3>
+          <pre id="blockedOutput">[]</pre>
+        </section>
+
+        <section>
+          <h3>Handoff</h3>
+          <pre id="handoffOutput">null</pre>
+        </section>
+      </aside>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

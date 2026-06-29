@@ -1,0 +1,28 @@
+{
+  "programs": [
+    {
+      "program": "Psychology",
+      "university": "Demo Metropolitan University",
+      "location": "Kuala Lumpur",
+      "annualFeeMyr": 32000,
+      "pathwayDuration": "3 years degree after foundation or equivalent",
+      "rankingBand": "teaching-focused private university"
+    },
+    {
+      "program": "Business",
+      "university": "Demo Valley University",
+      "location": "Selangor",
+      "annualFeeMyr": 28000,
+      "pathwayDuration": "3 years degree after foundation, diploma, or A-Level",
+      "rankingBand": "value-focused private university"
+    },
+    {
+      "program": "Computer Science",
+      "university": "Demo Tech Institute",
+      "location": "Penang",
+      "annualFeeMyr": 36000,
+      "pathwayDuration": "3 years degree after foundation or equivalent",
+      "rankingBand": "technology-focused private institution"
+    }
+  ]
+}
