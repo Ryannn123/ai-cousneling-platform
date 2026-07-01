@@ -251,7 +251,6 @@ function runtimePromotionRisk(signal = {}) {
 function semanticDeltaResultSchema() {
   return {
     type: "object",
-    description: "Untrusted semantic delta proposal extracted only from the current student message.",
     additionalProperties: false,
     required: ["memoryDeltaCandidates", "runtimeOnlySignalCandidates"],
     properties: {
@@ -271,13 +270,11 @@ function semanticDeltaResultSchema() {
 function memoryDeltaCandidatesSchema() {
   return {
     type: "object",
-    description: "Candidate memory deltas split by core counseling flow and personalization quality.",
     additionalProperties: false,
     required: ["flowDrivingDeltas", "qualityEnhancingDeltas"],
     properties: {
       flowDrivingDeltas: {
         ...flowDrivingDeltasSchema(),
-        description: "Newly stated academic, course, university, pathway, or counseling preference facts."
       },
       qualityEnhancingDeltas: {
         type: "array",
@@ -291,7 +288,6 @@ function memoryDeltaCandidatesSchema() {
 function flowDrivingDeltasSchema() {
   return {
     type: "object",
-    description: "Core counseling-flow facts stated or confirmed by the student in this turn.",
     additionalProperties: false,
     required: [
       "academicResults",
@@ -303,13 +299,13 @@ function flowDrivingDeltasSchema() {
       "confirmedCounselingPathwayPreferences"
     ],
     properties: {
-      academicResults: { type: "array", description: "Academic results or qualifications explicitly stated by the student.", items: academicResultDeltaSchema() },
-      coursesConsidering: { type: "array", description: "Courses the student is considering or rejecting, without treating interest as confirmation.", items: courseDeltaSchema() },
-      confirmedCounselingCoursePreferences: { type: "object", description: "Course choices explicitly confirmed as counseling preferences, not official applications.", items: courseDeltaSchema() },
-      universitiesConsidering: { type: "array", description: "Universities the student is considering or rejecting, without treating interest as confirmation.", items: universityDeltaSchema() },
-      confirmedCounselingUniversityPreferences: { type: "object", description: "University choices explicitly confirmed as counseling preferences, not official registration.", items: universityDeltaSchema() },
-      pathwaysConsidering: { type: "array", description: "Pathways the student is considering or rejecting, such as foundation, diploma, or A-level.", items: pathwayDeltaSchema() },
-      confirmedCounselingPathwayPreferences: { type: "object", description: "Pathway choices explicitly confirmed as counseling preferences, not enrollment.", items: pathwayDeltaSchema() }
+      academicResults: { type: "array", items: academicResultDeltaSchema() },
+      coursesConsidering: { type: "array", items: courseDeltaSchema() },
+      confirmedCounselingCoursePreferences: { type: "object", items: courseDeltaSchema() },
+      universitiesConsidering: { type: "array", items: universityDeltaSchema() },
+      confirmedCounselingUniversityPreferences: { type: "object", items: universityDeltaSchema() },
+      pathwaysConsidering: { type: "array", items: pathwayDeltaSchema() },
+      confirmedCounselingPathwayPreferences: { type: "object", items: pathwayDeltaSchema() }
     }
   };
 }
@@ -369,12 +365,23 @@ function pathwayDeltaSchema() {
 function qualityEnhancingDeltaSchema() {
   return {
     type: "object",
-    description: "A counseling-relevant personalization clue that improves guidance but does not drive official truth.",
+    description: "A counseling-relevant personalization clue that improves guidance.",
     additionalProperties: false,
     required: [...baseDeltaRequired(), "type", "value", "usefulness", "sensitivity"],
     properties: {
       ...baseDeltaProperties(),
-      type: stringEnum(["concern_or_blocker", "constraint", "preference", "goal_or_motivation", "influence_or_context", "other"], "Category of personalization signal."),
+      type: {
+        type: "string",
+        description: "Category of personalization signal.",
+        oneOf: [
+          { const: "concern_or_blocker", description: "A worry, hesitation, blocker, fear, confusion, or decision obstacle the student raises." },
+          { const: "constraint", description: "A practical limit or requirement, such as budget, location, timeline, study mode, eligibility, or family condition." },
+          { const: "preference", description: "A soft preference that can improve fit, such as location, campus style, ranking, learning style, or environment." },
+          { const: "goal_or_motivation", description: "A desired outcome or motivation, such as career interest, job prospects, migration, prestige, or personal purpose." },
+          { const: "influence_or_context", description: "Relevant surrounding context, such as parent influence, family expectations, work situation, or personal circumstances." },
+          { const: "other", description: "A counseling-relevant clue that does not fit the other categories." }
+        ]
+      },
       value: { ...looseObjectSchema(), description: "Small structured summary of the personalization clue." },
       usefulness: stringEnum(["low", "medium", "high"], "How useful this clue is for counseling quality."),
       sensitivity: stringEnum(["none", "possibly_sensitive", "sensitive"], "Privacy or care sensitivity of the clue."),
