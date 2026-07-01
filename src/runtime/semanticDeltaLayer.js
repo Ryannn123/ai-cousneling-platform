@@ -5,7 +5,7 @@ export async function parseLlmSemanticDelta(turnInput, options = {}) {
 }
 
 const turnInput = {
-  studentMessage: "I got 5 credits in SPM, but I don't know what course I want yet?"
+  studentMessage: "I’m considering Business and Psychology, but my parent want me to study law, which one have better job opportunity?"
 };
 
 const result = await parseLlmSemanticDelta(turnInput);

@@ -72,18 +72,11 @@ type QualityEnhancingDelta = {
   kind: "quality_enhancing";
   operation: "add_new";
   type:
-    | "concern"
-    | "budget_sensitivity"
-    | "university_fit_preference"
-    | "location_preference"
-    | "family_influence"
-    | "learning_preference"
-    | "study_mode_preference"
-    | "timeline_preference"
-    | "career_interest"
-    | "personality_preference"
-    | "decision_blocker"
-    | "tradeoff_priority"
+    | "concern_or_blocker"
+    | "constraint"
+    | "preference"
+    | "goal_or_motivation"
+    | "influence_or_context"
     | "other";
   value: Record<string, unknown>;
   usefulness: "low" | "medium" | "high";
@@ -93,6 +86,10 @@ type QualityEnhancingDelta = {
   evidence: { quote: string }[];
 };
 ```
+
+Use `concern_or_blocker` for worry, hesitation, confusion, blockers, indecision, or not knowing what course, university, or pathway to choose.
+
+Use `goal_or_motivation` only for positive desired outcomes such as career interest, job prospects, migration, prestige, or personal purpose. Do not use it for uncertainty or missing direction.
 
 Corrections, removals, contradictions, preference upgrades/downgrades, stale memory replacement, and confidence changes are not memory mutation behaviors in Phase 4 v1.3. They may surface as runtime-only ambiguity signals and are deferred to Phase 5 memory/state policy.
 

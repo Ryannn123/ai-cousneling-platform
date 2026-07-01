@@ -621,6 +621,8 @@ test("openai semantic delta extractor passes SemanticDeltaResult schema", async 
     assert.equal(flowSchema.properties.confirmedCounselingCoursePreferences.type, "object");
     assert.equal(flowSchema.required.includes("confirmedCounselingCoursePreferences"), false);
     assert.deepEqual(qualityTypeSchema.enum, ["concern_or_blocker", "constraint", "preference", "goal_or_motivation", "influence_or_context", "other"]);
+    assert.match(qualityTypeSchema.description, /not knowing what course/);
+    assert.match(qualityTypeSchema.description, /not uncertainty or missing direction/);
     assert.equal(qualityTypeSchema.oneOf, undefined);
     assert.equal(qualityTypeSchema.anyOf, undefined);
     assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].value, "Psychology");
@@ -670,6 +672,8 @@ test("gemini semantic delta extractor passes concise JSON schema without platfor
     assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
     assert.equal(flowSchema.properties.confirmedCounselingCoursePreferences.type, "object");
     assert.equal(flowSchema.required.includes("confirmedCounselingCoursePreferences"), false);
+    assert.match(qualityTypeSchema.description, /not knowing what course/);
+    assert.match(qualityTypeSchema.description, /not uncertainty or missing direction/);
     assert.equal(qualityTypeSchema.oneOf, undefined);
     assert.equal(qualityTypeSchema.anyOf, undefined);
     assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].value, "Psychology");
