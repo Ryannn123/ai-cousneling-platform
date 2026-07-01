@@ -129,7 +129,7 @@ function questionCount(text = "") {
 
 function supportsConfirmedPreference(acceptedSemanticDelta) {
   const flowDriving = acceptedSemanticDelta?.acceptedMemoryDeltas?.flowDrivingDeltas;
-  return Boolean(flowDriving?.confirmedCounselingCoursePreferences?.length
-    || flowDriving?.confirmedCounselingUniversityPreferences?.length
-    || flowDriving?.confirmedCounselingPathwayPreferences?.length);
+  return Boolean(flowDriving?.confirmedCounselingCoursePreferences
+    || flowDriving?.confirmedCounselingUniversityPreferences
+    || flowDriving?.confirmedCounselingPathwayPreferences);
 }

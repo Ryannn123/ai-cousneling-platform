@@ -9,6 +9,7 @@ const BOUNDARY_TYPES = new Set([
   "ambiguous_proceed_language"
 ]);
 const OFFICIAL_MEMORY = /\b(application submitted|registration completed|registered|payment confirmed|paid|seat reserved|crm updated|enrollment confirmed|enrolled)\b/i;
+const QUALITY_TYPES = new Set(["concern_or_blocker", "constraint", "preference", "goal_or_motivation", "influence_or_context", "other"]);
 
 export class SemanticDeltaValidator {
   validate({ rawSemanticDelta, fastBoundarySignals = [], turnInput, extractor = {}, skillContext } = {}) {
@@ -58,11 +59,11 @@ function normalizeMemoryDeltas(raw) {
     flowDrivingDeltas: {
       academicResults: array(flow.academicResults),
       coursesConsidering: array(flow.coursesConsidering),
-      confirmedCounselingCoursePreferences: arrayOrSingle(flow.confirmedCounselingCoursePreferences),
+      confirmedCounselingCoursePreferences: objectOrNull(flow.confirmedCounselingCoursePreferences),
       universitiesConsidering: array(flow.universitiesConsidering),
-      confirmedCounselingUniversityPreferences: arrayOrSingle(flow.confirmedCounselingUniversityPreferences),
+      confirmedCounselingUniversityPreferences: objectOrNull(flow.confirmedCounselingUniversityPreferences),
       pathwaysConsidering: array(flow.pathwaysConsidering),
-      confirmedCounselingPathwayPreferences: arrayOrSingle(flow.confirmedCounselingPathwayPreferences)
+      confirmedCounselingPathwayPreferences: objectOrNull(flow.confirmedCounselingPathwayPreferences)
     },
     qualityEnhancingDeltas: array(memory.qualityEnhancingDeltas)
   };
@@ -92,6 +93,11 @@ function validateQualityDeltas(deltas, rejectedCandidates, validationEvents) {
       continue;
     }
     if (!validateCandidate(`acceptedMemoryDeltas.qualityEnhancingDeltas.${index}`, delta, rejectedCandidates, validationEvents)) {
+      deltas.splice(index, 1);
+      continue;
+    }
+    if (!QUALITY_TYPES.has(delta.type)) {
+      reject(rejectedCandidates, validationEvents, `acceptedMemoryDeltas.qualityEnhancingDeltas.${index}`, delta, "quality_type_invalid");
       deltas.splice(index, 1);
     }
   }
@@ -135,35 +141,39 @@ function validateDeltaList(path, deltas, rejectedCandidates, validationEvents) {
 
 function validateConfirmedPreference(flow, label, listKey, rejectedCandidates, downgradedCandidates, validationEvents) {
   const confirmedKey = `confirmedCounseling${label}Preferences`;
-  const confirmed = flow[confirmedKey];
-  for (let index = confirmed.length - 1; index >= 0; index -= 1) {
-    const delta = confirmed[index];
-    if (!validateCandidate(`acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}.${index}`, delta, rejectedCandidates, validationEvents)) {
-      confirmed.splice(index, 1);
-      continue;
-    }
-    const directQuote = delta.evidence.map((item) => item.quote).join(" ");
-    if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(directQuote)) {
-      const downgraded = {
-        ...delta,
-        status: "preferred",
-        confidence: delta.confidence === "high" ? "medium" : delta.confidence,
-        promotionRisk: "requires_confirmation"
-      };
-      flow[listKey].push(downgraded);
-      confirmed.splice(index, 1);
-      downgradedCandidates.push({
-        candidatePath: `acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}.${index}`,
-        originalCandidate: delta,
-        downgradedCandidate: downgraded,
-        reason: "value_confirmation_not_explicit"
-      });
-      validationEvents.push({
-        type: "promotion_blocked",
-        severity: "warning",
-        message: `acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}.${index} downgraded: value_confirmation_not_explicit.`
-      });
-    }
+  const delta = flow[confirmedKey];
+  const path = `acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}`;
+  if (!delta) return;
+  if (!validateCandidate(path, delta, rejectedCandidates, validationEvents)) {
+    flow[confirmedKey] = null;
+    return;
+  }
+  if (!hasMeaningfulValue(delta)) {
+    reject(rejectedCandidates, validationEvents, path, delta, "delta_value_missing");
+    flow[confirmedKey] = null;
+    return;
+  }
+  const directQuote = delta.evidence.map((item) => item.quote).join(" ");
+  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(directQuote)) {
+    const downgraded = {
+      ...delta,
+      status: "preferred",
+      confidence: delta.confidence === "high" ? "medium" : delta.confidence,
+      promotionRisk: "requires_confirmation"
+    };
+    flow[listKey].push(downgraded);
+    flow[confirmedKey] = null;
+    downgradedCandidates.push({
+      candidatePath: path,
+      originalCandidate: delta,
+      downgradedCandidate: downgraded,
+      reason: "value_confirmation_not_explicit"
+    });
+    validationEvents.push({
+      type: "promotion_blocked",
+      severity: "warning",
+      message: `${path} downgraded: value_confirmation_not_explicit.`
+    });
   }
 }
 
@@ -258,11 +268,15 @@ function reject(rejectedCandidates, validationEvents, candidatePath, proposedCan
   validationEvents.push({ type: eventType, severity: "warning", message: `${candidatePath} rejected: ${reason}.` });
 }
 
+function hasMeaningfulValue(delta) {
+  if (typeof delta.value === "string") return Boolean(delta.value.trim());
+  return Boolean(delta.value && typeof delta.value === "object" && Object.keys(delta.value).length);
+}
+
 function array(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function arrayOrSingle(value) {
-  if (Array.isArray(value)) return value;
-  return value && typeof value === "object" ? [value] : [];
+function objectOrNull(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }

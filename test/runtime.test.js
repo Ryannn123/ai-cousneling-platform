@@ -62,11 +62,11 @@ function mockSemanticDelta(turnInput, fastBoundarySignals) {
   const flowDrivingDeltas = {
     academicResults: arrayOf(academicResultDelta(text)),
     coursesConsidering: courseDeltas(text),
-    confirmedCounselingCoursePreferences: arrayOf(confirmedCourseDelta(text)),
+    confirmedCounselingCoursePreferences: confirmedCourseDelta(text) || null,
     universitiesConsidering: universityDeltas(text),
-    confirmedCounselingUniversityPreferences: arrayOf(confirmedUniversityDelta(text)),
+    confirmedCounselingUniversityPreferences: confirmedUniversityDelta(text) || null,
     pathwaysConsidering: pathwayDeltas(text),
-    confirmedCounselingPathwayPreferences: arrayOf(confirmedPathwayDelta(text))
+    confirmedCounselingPathwayPreferences: confirmedPathwayDelta(text) || null
   };
   return {
     memoryDeltaCandidates: {
@@ -401,7 +401,7 @@ test("weak interest is not over-promoted to confirmed preference", async () => {
   });
   assert.notEqual(result.operatingContext.preferenceStrength, "L4");
   assert.equal(flowDrivingDeltas(result).coursesConsidering[0].status, "considering");
-  assert.equal(flowDrivingDeltas(result).confirmedCounselingCoursePreferences.length, 0);
+  assert.equal(flowDrivingDeltas(result).confirmedCounselingCoursePreferences, null);
   assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "confirmed_counseling_preference"), false);
 });
 
@@ -543,6 +543,39 @@ test("phase 4 rejects irrelevant quality noise", async () => {
   assert.ok(result.acceptedSemanticDelta.rejectedCandidates.some((candidate) => candidate.reason === "quality_signal_low_usefulness"));
 });
 
+test("phase 4 rejects invented quality enhancing types", () => {
+  const result = new SemanticDeltaValidator().validate({
+    rawSemanticDelta: {
+      memoryDeltaCandidates: {
+        flowDrivingDeltas: {
+          academicResults: [],
+          coursesConsidering: [],
+          confirmedCounselingCoursePreferences: null,
+          universitiesConsidering: [],
+          confirmedCounselingUniversityPreferences: null,
+          pathwaysConsidering: [],
+          confirmedCounselingPathwayPreferences: null
+        },
+        qualityEnhancingDeltas: [{
+          operation: "add_new",
+          kind: "quality_enhancing",
+          type: "counseling_goal",
+          value: { status: "undecided_on_course" },
+          usefulness: "high",
+          sensitivity: "none",
+          confidence: "high",
+          evidence: [{ quote: "I don't know what course I want yet" }]
+        }]
+      },
+      runtimeOnlySignalCandidates: []
+    },
+    turnInput: { studentMessage: "I don't know what course I want yet" }
+  });
+
+  assert.equal(result.acceptedMemoryDeltas.qualityEnhancingDeltas.length, 0);
+  assert.ok(result.rejectedCandidates.some((candidate) => candidate.reason === "quality_type_invalid"));
+});
+
 test("phase 4 knowledge needs are accepted for fees entry requirements and ranking", async () => {
   const extractor = testSemanticDeltaExtractor();
   const result = await extractor.extract({
@@ -582,7 +615,14 @@ test("openai semantic delta extractor passes SemanticDeltaResult schema", async 
     assert.equal(capturedRequest.body.text.format.name, "SemanticDeltaResult");
     assert.ok(capturedRequest.body.text.format.schema.required.includes("memoryDeltaCandidates"));
     assert.equal(capturedRequest.body.text.format.schema.properties.conversationId, undefined);
-    assert.equal(capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas.properties.minimumProfileSignals, undefined);
+    const flowSchema = capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas;
+    const qualityTypeSchema = capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.qualityEnhancingDeltas.items.properties.type;
+    assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
+    assert.equal(flowSchema.properties.confirmedCounselingCoursePreferences.type, "object");
+    assert.equal(flowSchema.required.includes("confirmedCounselingCoursePreferences"), false);
+    assert.deepEqual(qualityTypeSchema.enum, ["concern_or_blocker", "constraint", "preference", "goal_or_motivation", "influence_or_context", "other"]);
+    assert.equal(qualityTypeSchema.oneOf, undefined);
+    assert.equal(qualityTypeSchema.anyOf, undefined);
     assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].value, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
@@ -625,8 +665,13 @@ test("gemini semantic delta extractor passes concise JSON schema without platfor
     assert.equal(capturedRequest.body.response_format.schema.required.includes("conversationId"), false);
     assert.equal(capturedRequest.body.response_format.schema.properties.conversationId, undefined);
     const flowSchema = capturedRequest.body.response_format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas;
+    const qualityTypeSchema = capturedRequest.body.response_format.schema.properties.memoryDeltaCandidates.properties.qualityEnhancingDeltas.items.properties.type;
     assert.equal(flowSchema.properties.coursesConsidering.items.properties.source, undefined);
     assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
+    assert.equal(flowSchema.properties.confirmedCounselingCoursePreferences.type, "object");
+    assert.equal(flowSchema.required.includes("confirmedCounselingCoursePreferences"), false);
+    assert.equal(qualityTypeSchema.oneOf, undefined);
+    assert.equal(qualityTypeSchema.anyOf, undefined);
     assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].value, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
@@ -804,17 +849,17 @@ test("phase 4 audit records accepted rejected and downgraded semantic deltas", a
             flowDrivingDeltas: {
               academicResults: [],
               coursesConsidering: [],
-              confirmedCounselingCoursePreferences: [{
+              confirmedCounselingCoursePreferences: {
                 operation: "add_new",
                 value: "Psychology",
                 status: "confirmed_counseling_preference",
                 confidence: "high",
                 evidence: [{ quote: "I prefer Psychology" }]
-              }],
+              },
               universitiesConsidering: [],
-              confirmedCounselingUniversityPreferences: [],
+              confirmedCounselingUniversityPreferences: null,
               pathwaysConsidering: [],
-              confirmedCounselingPathwayPreferences: []
+              confirmedCounselingPathwayPreferences: null
             },
             qualityEnhancingDeltas: [{
               operation: "add_new",
@@ -860,11 +905,11 @@ test("phase 4 invalid semantic delta evidence falls back safely", async () => {
                 confidence: "high",
                 evidence: []
               }],
-              confirmedCounselingCoursePreferences: [],
+              confirmedCounselingCoursePreferences: null,
               universitiesConsidering: [],
-              confirmedCounselingUniversityPreferences: [],
+              confirmedCounselingUniversityPreferences: null,
               pathwaysConsidering: [],
-              confirmedCounselingPathwayPreferences: []
+              confirmedCounselingPathwayPreferences: null
             },
             qualityEnhancingDeltas: []
           },
@@ -1198,11 +1243,11 @@ function semanticDeltaFixture() {
           confidence: "high",
           evidence: [{ quote: "Psychology sounds interesting" }]
         }],
-        confirmedCounselingCoursePreferences: [],
+        confirmedCounselingCoursePreferences: null,
         universitiesConsidering: [],
-        confirmedCounselingUniversityPreferences: [],
+        confirmedCounselingUniversityPreferences: null,
         pathwaysConsidering: [],
-        confirmedCounselingPathwayPreferences: []
+        confirmedCounselingPathwayPreferences: null
       },
       qualityEnhancingDeltas: []
     },
@@ -1222,11 +1267,11 @@ function conciseSemanticDeltaFixture() {
           confidence: "high",
           evidence: [{ quote: "Psychology sounds interesting" }]
         }],
-        confirmedCounselingCoursePreferences: [],
+        confirmedCounselingCoursePreferences: null,
         universitiesConsidering: [],
-        confirmedCounselingUniversityPreferences: [],
+        confirmedCounselingUniversityPreferences: null,
         pathwaysConsidering: [],
-        confirmedCounselingPathwayPreferences: []
+        confirmedCounselingPathwayPreferences: null
       },
       qualityEnhancingDeltas: [{
         operation: "add_new",

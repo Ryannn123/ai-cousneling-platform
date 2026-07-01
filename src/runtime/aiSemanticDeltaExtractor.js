@@ -190,13 +190,13 @@ function hydrateSemanticDelta(raw, turnInput = {}) {
       flowDrivingDeltas: {
         academicResults: array(flow.academicResults).map((delta) => hydrateDelta(delta, text)),
         coursesConsidering: array(flow.coursesConsidering).map((delta) => hydrateDelta(delta, text)),
-        confirmedCounselingCoursePreferences: arrayOrSingle(flow.confirmedCounselingCoursePreferences).map((delta) => hydrateDelta(delta, text)),
+        confirmedCounselingCoursePreferences: hydrateOptionalDelta(flow.confirmedCounselingCoursePreferences, text),
         universitiesConsidering: array(flow.universitiesConsidering).map((delta) => hydrateDelta(delta, text)),
-        confirmedCounselingUniversityPreferences: arrayOrSingle(flow.confirmedCounselingUniversityPreferences).map((delta) => hydrateDelta(delta, text)),
+        confirmedCounselingUniversityPreferences: hydrateOptionalDelta(flow.confirmedCounselingUniversityPreferences, text),
         pathwaysConsidering: array(flow.pathwaysConsidering).map((delta) => hydrateDelta(delta, text)),
-        confirmedCounselingPathwayPreferences: arrayOrSingle(flow.confirmedCounselingPathwayPreferences).map((delta) => hydrateDelta(delta, text))
+        confirmedCounselingPathwayPreferences: hydrateOptionalDelta(flow.confirmedCounselingPathwayPreferences, text)
       },
-      qualityEnhancingDeltas: array(memory.qualityEnhancingDeltas).map((delta) => hydrateDelta({ kind: "quality_enhancing", ...delta }, text))
+      qualityEnhancingDeltas: array(memory.qualityEnhancingDeltas).map((delta) => hydrateDelta(delta, text))
     },
     runtimeOnlySignalCandidates: array(value.runtimeOnlySignalCandidates).map((signal) => hydrateSignal(signal, text, runtimePromotionRisk(signal)))
   };
@@ -212,6 +212,10 @@ function hydrateDelta(delta, text) {
     source: value.source || "current_message",
     promotionRisk: value.promotionRisk || "none"
   };
+}
+
+function hydrateOptionalDelta(delta, text) {
+  return delta && typeof delta === "object" && !Array.isArray(delta) ? hydrateDelta(delta, text) : null;
 }
 
 function hydrateSignal(signal, text, promotionRisk = "none") {
@@ -286,20 +290,17 @@ function flowDrivingDeltasSchema() {
     required: [
       "academicResults",
       "coursesConsidering",
-      "confirmedCounselingCoursePreferences",
       "universitiesConsidering",
-      "confirmedCounselingUniversityPreferences",
-      "pathwaysConsidering",
-      "confirmedCounselingPathwayPreferences"
+      "pathwaysConsidering"
     ],
     properties: {
-      academicResults: { type: "array", items: academicResultDeltaSchema() },
-      coursesConsidering: { type: "array", items: courseDeltaSchema() },
-      confirmedCounselingCoursePreferences: { type: "object", items: courseDeltaSchema() },
-      universitiesConsidering: { type: "array", items: universityDeltaSchema() },
-      confirmedCounselingUniversityPreferences: { type: "object", items: universityDeltaSchema() },
-      pathwaysConsidering: { type: "array", items: pathwayDeltaSchema() },
-      confirmedCounselingPathwayPreferences: { type: "object", items: pathwayDeltaSchema() }
+      academicResults: { type: "array", description: "Newly stated academic results only.", items: academicResultDeltaSchema() },
+      coursesConsidering: { type: "array", description: "Courses the student is considering or prefers, but has not explicitly confirmed as their counseling choice.", items: courseDeltaSchema() },
+      confirmedCounselingCoursePreferences: { ...courseDeltaSchema(), description: "One explicit current counseling course choice only, such as 'my choice is Psychology' or 'let's go with IT'. Omit this field when the student is unsure." },
+      universitiesConsidering: { type: "array", description: "Universities the student is considering or prefers, but has not explicitly confirmed as their counseling choice.", items: universityDeltaSchema() },
+      confirmedCounselingUniversityPreferences: { ...universityDeltaSchema(), description: "One explicit current counseling university choice only. Omit this field when the student is unsure or has not chosen a university." },
+      pathwaysConsidering: { type: "array", description: "Pathways the student is considering or prefers, but has not explicitly confirmed as their counseling choice.", items: pathwayDeltaSchema() },
+      confirmedCounselingPathwayPreferences: { ...pathwayDeltaSchema(), description: "One explicit current counseling pathway choice only. Omit this field when the student is unsure or has not chosen a pathway." }
     }
   };
 }
@@ -366,15 +367,8 @@ function qualityEnhancingDeltaSchema() {
       ...baseDeltaProperties(),
       type: {
         type: "string",
-        description: "Category of personalization signal.",
-        oneOf: [
-          { const: "concern_or_blocker", description: "A worry, hesitation, blocker, fear, confusion, or decision obstacle the student raises." },
-          { const: "constraint", description: "A practical limit or requirement, such as budget, location, timeline, study mode, eligibility, or family condition." },
-          { const: "preference", description: "A soft preference that can improve fit, such as location, campus style, ranking, learning style, or environment." },
-          { const: "goal_or_motivation", description: "A desired outcome or motivation, such as career interest, job prospects, migration, prestige, or personal purpose." },
-          { const: "influence_or_context", description: "Relevant surrounding context, such as parent influence, family expectations, work situation, or personal circumstances." },
-          { const: "other", description: "A counseling-relevant clue that does not fit the other categories." }
-        ]
+        enum: ["concern_or_blocker", "constraint", "preference", "goal_or_motivation", "influence_or_context", "other"],
+        description: "Allowed categories: concern_or_blocker=worry, hesitation, confusion, or blocker; constraint=practical limit such as budget, location, timeline, study mode, eligibility, or family condition; preference=soft fit preference such as location, campus style, ranking, learning style, or environment; goal_or_motivation=desired outcome such as career interest, job prospects, migration, prestige, or purpose; influence_or_context=parent, family, work, or personal context; other=useful clue that does not fit the other categories. Do not invent new type names."
       },
       value: { ...looseObjectSchema(), description: "Small structured summary of the personalization clue." },
       usefulness: stringEnum(["low", "medium", "high"], "How useful this clue is for counseling quality."),
@@ -447,9 +441,4 @@ function looseObjectSchema() {
 
 function array(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function arrayOrSingle(value) {
-  if (Array.isArray(value)) return value;
-  return value && typeof value === "object" ? [value] : [];
 }

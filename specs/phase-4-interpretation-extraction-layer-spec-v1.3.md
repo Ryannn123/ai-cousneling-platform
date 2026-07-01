@@ -37,11 +37,11 @@ type SemanticDeltaResult = {
     flowDrivingDeltas: {
       academicResults: AcademicResultDelta[];
       coursesConsidering: CourseDelta[];
-      confirmedCounselingCoursePreferences: CourseDelta[];
+      confirmedCounselingCoursePreferences?: CourseDelta;
       universitiesConsidering: UniversityDelta[];
-      confirmedCounselingUniversityPreferences: UniversityDelta[];
+      confirmedCounselingUniversityPreferences?: UniversityDelta;
       pathwaysConsidering: PathwayDelta[];
-      confirmedCounselingPathwayPreferences: PathwayDelta[];
+      confirmedCounselingPathwayPreferences?: PathwayDelta;
     };
     qualityEnhancingDeltas: QualityEnhancingDelta[];
   };

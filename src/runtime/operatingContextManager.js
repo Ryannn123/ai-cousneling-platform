@@ -120,9 +120,9 @@ function flowDrivingFromSemanticDelta(acceptedSemanticDelta) {
     coursesConsidering: deltas.coursesConsidering || [],
     universitiesConsidering: deltas.universitiesConsidering || [],
     pathwaysConsidering: deltas.pathwaysConsidering || [],
-    confirmedCounselingCoursePreference: deltas.confirmedCounselingCoursePreferences?.[0],
-    confirmedCounselingUniversityPreference: deltas.confirmedCounselingUniversityPreferences?.[0],
-    confirmedCounselingPathwayPreference: deltas.confirmedCounselingPathwayPreferences?.[0]
+    confirmedCounselingCoursePreference: deltas.confirmedCounselingCoursePreferences,
+    confirmedCounselingUniversityPreference: deltas.confirmedCounselingUniversityPreferences,
+    confirmedCounselingPathwayPreference: deltas.confirmedCounselingPathwayPreferences
   };
 }
 
