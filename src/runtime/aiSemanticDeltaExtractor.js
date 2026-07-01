@@ -368,7 +368,7 @@ function qualityEnhancingDeltaSchema() {
       type: {
         type: "string",
         enum: ["concern_or_blocker", "constraint", "preference", "influence_or_context", "other"],
-        description: "Allowed categories: concern_or_blocker=worry, hesitation, confusion, blocker, indecision; constraint=practical limit such as budget, location, timeline, study mode, eligibility, or family condition; preference=soft fit preference such as location, campus style, ranking, learning style, or environment; influence_or_context=parent, family, work, or personal context; other=useful clue that does not fit the other categories. Do not invent new type names."
+        description: "Allowed categories: concern_or_blocker=worry, hesitation, confusion, blocker, indecision, or not knowing what course/university/pathway to choose; constraint=practical limit such as budget, location, timeline, study mode, eligibility, or family condition; preference=soft fit preference such as location, campus style, ranking, learning style, or environment; influence_or_context=parent, family, work, or personal context; other=useful clue that does not fit the other categories. Do not invent new type names."
       },
       value: { ...looseObjectSchema(), description: "Small structured summary of the personalization clue." },
       usefulness: stringEnum(["low", "medium", "high"], "How useful this clue is for counseling quality."),

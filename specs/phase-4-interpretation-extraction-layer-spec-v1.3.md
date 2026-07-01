@@ -75,7 +75,6 @@ type QualityEnhancingDelta = {
     | "concern_or_blocker"
     | "constraint"
     | "preference"
-    | "goal_or_motivation"
     | "influence_or_context"
     | "other";
   value: Record<string, unknown>;
@@ -88,8 +87,6 @@ type QualityEnhancingDelta = {
 ```
 
 Use `concern_or_blocker` for worry, hesitation, confusion, blockers, indecision, or not knowing what course, university, or pathway to choose.
-
-Use `goal_or_motivation` only for positive desired outcomes such as career interest, job prospects, migration, prestige, or personal purpose. Do not use it for uncertainty or missing direction.
 
 Corrections, removals, contradictions, preference upgrades/downgrades, stale memory replacement, and confidence changes are not memory mutation behaviors in Phase 4 v1.3. They may surface as runtime-only ambiguity signals and are deferred to Phase 5 memory/state policy.
 

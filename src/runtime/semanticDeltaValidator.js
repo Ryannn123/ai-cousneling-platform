@@ -9,7 +9,7 @@ const BOUNDARY_TYPES = new Set([
   "ambiguous_proceed_language"
 ]);
 const OFFICIAL_MEMORY = /\b(application submitted|registration completed|registered|payment confirmed|paid|seat reserved|crm updated|enrollment confirmed|enrolled)\b/i;
-const QUALITY_TYPES = new Set(["concern_or_blocker", "constraint", "preference", "goal_or_motivation", "influence_or_context", "other"]);
+const QUALITY_TYPES = new Set(["concern_or_blocker", "constraint", "preference", "influence_or_context", "other"]);
 
 export class SemanticDeltaValidator {
   validate({ rawSemanticDelta, fastBoundarySignals = [], turnInput, extractor = {}, skillContext } = {}) {
