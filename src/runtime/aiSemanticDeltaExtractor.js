@@ -1,9 +1,3 @@
-const COURSES = ["psychology", "business", "computer science", "it", "design", "engineering", "accounting"];
-const PATHWAYS = ["foundation", "diploma", "a-level", "a level"];
-const UNIVERSITIES = ["demo metropolitan university", "demo valley university", "demo tech institute", "university a", "university b", "sunway", "taylor's", "taylors", "monash", "apu", "inti", "help", "utar"];
-const NO_COURSE_DIRECTION = /\b(don'?t know what course|do not know what course|no course|not sure what to study|don't know what to study|do not know what to study)\b/i;
-const NO_UNIVERSITY_DIRECTION = /\b(don'?t know which university|do not know which university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university)\b/i;
-
 export class AISemanticDeltaExtractor {
   constructor({
     provider = process.env.AI_PROVIDER || inferProvider(process.env.AI_MODEL || process.env.GEMINI_MODEL || process.env.OPENAI_MODEL),
@@ -21,7 +15,7 @@ export class AISemanticDeltaExtractor {
   }
 
   async extract(turnInput, fastBoundarySignals = []) {
-    if (!this.hasApiKey()) return mockSemanticDelta(turnInput, fastBoundarySignals);
+    if (!this.hasApiKey()) throw new Error("AI semantic delta API key is required for extraction");
     return this.extractLive(turnInput, fastBoundarySignals);
   }
 
@@ -196,11 +190,11 @@ function hydrateSemanticDelta(raw, turnInput = {}) {
       flowDrivingDeltas: {
         academicResults: array(flow.academicResults).map((delta) => hydrateDelta(delta, text)),
         coursesConsidering: array(flow.coursesConsidering).map((delta) => hydrateDelta(delta, text)),
-        confirmedCounselingCoursePreferences: array(flow.confirmedCounselingCoursePreferences).map((delta) => hydrateDelta(delta, text)),
+        confirmedCounselingCoursePreferences: arrayOrSingle(flow.confirmedCounselingCoursePreferences).map((delta) => hydrateDelta(delta, text)),
         universitiesConsidering: array(flow.universitiesConsidering).map((delta) => hydrateDelta(delta, text)),
-        confirmedCounselingUniversityPreferences: array(flow.confirmedCounselingUniversityPreferences).map((delta) => hydrateDelta(delta, text)),
+        confirmedCounselingUniversityPreferences: arrayOrSingle(flow.confirmedCounselingUniversityPreferences).map((delta) => hydrateDelta(delta, text)),
         pathwaysConsidering: array(flow.pathwaysConsidering).map((delta) => hydrateDelta(delta, text)),
-        confirmedCounselingPathwayPreferences: array(flow.confirmedCounselingPathwayPreferences).map((delta) => hydrateDelta(delta, text))
+        confirmedCounselingPathwayPreferences: arrayOrSingle(flow.confirmedCounselingPathwayPreferences).map((delta) => hydrateDelta(delta, text))
       },
       qualityEnhancingDeltas: array(memory.qualityEnhancingDeltas).map((delta) => hydrateDelta({ kind: "quality_enhancing", ...delta }, text))
     },
@@ -451,261 +445,11 @@ function looseObjectSchema() {
   return { type: "object", additionalProperties: true };
 }
 
-function mockSemanticDelta(turnInput, fastBoundarySignals) {
-  const text = turnInput.studentMessage || "";
-  const flowDrivingDeltas = {
-    academicResults: arrayOf(academicResultDelta(text)),
-    coursesConsidering: courseDeltas(text),
-    confirmedCounselingCoursePreferences: arrayOf(confirmedCourseDelta(text)),
-    universitiesConsidering: universityDeltas(text),
-    confirmedCounselingUniversityPreferences: arrayOf(confirmedUniversityDelta(text)),
-    pathwaysConsidering: pathwayDeltas(text),
-    confirmedCounselingPathwayPreferences: arrayOf(confirmedPathwayDelta(text))
-  };
-  return {
-    memoryDeltaCandidates: {
-      flowDrivingDeltas,
-      qualityEnhancingDeltas: qualityDeltas(text)
-    },
-    runtimeOnlySignalCandidates: [
-      ...boundarySignals(text, fastBoundarySignals),
-      ...knowledgeNeeds(text),
-      ...arrayOf(postureSignal(text, flowDrivingDeltas)),
-      ...ambiguitySignals(text)
-    ]
-  };
-}
-
-function courseDeltas(text) {
-  const lower = text.toLowerCase();
-  return COURSES
-    .filter((course) => includesTerm(lower, course))
-    .map((course) => ({
-      ...baseDelta(text, course),
-      courseOrProgram: course === "it" ? "IT" : title(course),
-      status: /\bprefer\b/i.test(text) && includesTerm(lower, course) ? "preferred" : "considering"
-    }));
-}
-
-function confirmedCourseDelta(text) {
-  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(text)) return undefined;
-  const course = courseDeltas(text)[0];
-  return course ? { ...course, ...baseDelta(text, text), status: "confirmed_counseling_preference", confidence: "high" } : undefined;
-}
-
-function universityDeltas(text) {
-  const lower = text.toLowerCase();
-  return UNIVERSITIES
-    .filter((university) => includesTerm(lower, university))
-    .map((university) => ({
-      ...baseDelta(text, university),
-      university: university.includes("university ") ? title(university) : title(university).replace(/\bApu\b/, "APU").replace(/\bUtar\b/, "UTAR"),
-      status: /\bprefer\b/i.test(text) && includesTerm(lower, university) ? "preferred" : "considering"
-    }));
-}
-
-function confirmedUniversityDelta(text) {
-  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(text)) return undefined;
-  const university = universityDeltas(text)[0];
-  return university ? { ...university, ...baseDelta(text, text), status: "confirmed_counseling_preference", confidence: "high" } : undefined;
-}
-
-function pathwayDeltas(text) {
-  const lower = text.toLowerCase();
-  return PATHWAYS
-    .filter((pathway) => lower.includes(pathway))
-    .map((pathway) => ({
-      ...baseDelta(text, pathway),
-      pathway: title(pathway),
-      status: /\bprefer\b/i.test(text) && lower.includes(pathway) ? "preferred" : "considering"
-    }));
-}
-
-function confirmedPathwayDelta(text) {
-  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(text)) return undefined;
-  const pathway = pathwayDeltas(text)[0];
-  return pathway ? { ...pathway, ...baseDelta(text, text), status: "confirmed_counseling_preference", confidence: "high" } : undefined;
-}
-
-function academicResultDelta(text) {
-  const match = text.match(/\b(spm|a[- ]?level|foundation|diploma|cgpa|gpa|result|results|grades?|credits?)\b[^.?!]*/i);
-  if (!match) return undefined;
-  return {
-    ...baseDelta(text, match[0]),
-    value: match[0].trim()
-  };
-}
-
-function boundarySignals(text, fastBoundarySignals = []) {
-  const fromFast = fastBoundarySignals.map((signal) => ({
-    ...baseSignal(text, signal.matchedText, "high", signal.severityCandidate === "red" ? "official_action_risk" : "requires_confirmation"),
-    kind: "boundary",
-    type: signal.type,
-    triggerType: signal.triggerType,
-    severityCandidate: signal.severityCandidate,
-    recommendedBehavior: signal.recommendedBehavior === "clarify_once" ? "clarify_once" : "handoff"
-  }));
-  const sensitive = /\b(financial hardship|disability|medical hardship|visa issue|legal issue)\b/i.test(text)
-    ? [{
-      ...baseSignal(text, text, "medium", "official_action_risk"),
-      kind: "boundary",
-      type: "sensitive_context",
-      triggerType: "H5",
-      severityCandidate: "red",
-      recommendedBehavior: "handoff"
-    }]
-    : [];
-  return dedupeSignals([...fromFast, ...sensitive], "type");
-}
-
-function knowledgeNeeds(text) {
-  const patterns = [
-    ["fees", /\b(fee|fees|cost|tuition)\b/i],
-    ["entry_requirements", /\b(entry requirement|requirements?|qualify|eligible|eligibility)\b/i],
-    ["intake", /\b(intake|start date)\b/i],
-    ["duration", /\b(duration|how long)\b/i],
-    ["campus_location", /\b(campus|location|where)\b/i],
-    ["ranking", /\b(ranking|rank|ranked|higher)\b/i],
-    ["scholarship", /\b(scholarship)\b/i],
-    ["pathway_requirement", /\b(pathway requirement|foundation requirement|diploma requirement)\b/i]
-  ];
-  return patterns
-    .filter(([, pattern]) => pattern.test(text))
-    .map(([type, pattern]) => ({
-      ...baseSignal(text, text.match(pattern)?.[0] || text),
-      kind: "knowledge_need",
-      type,
-      query: text,
-      decisionCriticality: ["entry_requirements", "eligibility", "pathway_requirement"].includes(type)
-        ? "decision_critical"
-        : "possibly_decision_critical"
-    }));
-}
-
-function ambiguitySignals(text) {
-  if (!/\b(actually|instead|anymore|not sure anymore|i said .* earlier|now i prefer)\b/i.test(text)) return [];
-  const newCourse = courseDeltas(text).find((delta) => !/\b(don'?t want|do not want|not)\b/i.test(text.slice(Math.max(0, text.toLowerCase().indexOf(delta.courseOrProgram.toLowerCase()) - 20), text.toLowerCase().indexOf(delta.courseOrProgram.toLowerCase()))));
-  return [{
-    ...baseSignal(text, text, "medium", "requires_confirmation"),
-    kind: "ambiguity",
-    type: /\bnot sure anymore\b/i.test(text) ? "preference_downgrade" : "direction_change",
-    newClaim: newCourse ? { courseOrProgram: newCourse.courseOrProgram } : { message: text },
-    recommendedBehavior: "clarify_once"
-  }];
-}
-
-function qualityDeltas(text) {
-  const deltas = [];
-  if (/\b(budget|affordable|cheap|low cost|value)\b/i.test(text)) {
-    deltas.push({ ...quality("budget_sensitivity", text, { preference: "budget_or_value" }), usefulness: "high" });
-  }
-  if (/\b(ranking|prestige|reputation)\b/i.test(text)) {
-    deltas.push({ ...quality("university_fit_preference", text, { preference: "ranking_or_prestige" }), usefulness: "high" });
-  }
-  if (/\b(kl|kuala lumpur|selangor|penang|johor|nearby|near campus)\b/i.test(text)) {
-    deltas.push({ ...quality("location_preference", text, { location: text.match(/\b(kl|kuala lumpur|selangor|penang|johor|nearby)\b/i)?.[0] || "stated_location" }), usefulness: "high" });
-  }
-  if (/\b(parent|parents|family|guardian)\b/i.test(text)) {
-    deltas.push({ ...quality("family_influence", text, { influence: "family_or_guardian" }), usefulness: "medium" });
-  }
-  if (/\b(job prospects?|career|work as|become)\b/i.test(text)) {
-    deltas.push({ ...quality("career_interest", text, { interest: "career_outcome" }), usefulness: "high" });
-  }
-  if (/\b(worried|concern|afraid|confused)\b/i.test(text)) {
-    deltas.push({ ...quality("concern", text, { concern: "student_concern" }), usefulness: "high" });
-  }
-  if (/\b(coffee|movie|football)\b/i.test(text)) {
-    deltas.push({ ...quality("other", text, { trivia: text }), usefulness: "low" });
-  }
-  return deltas;
-}
-
-function postureSignal(text, flowDrivingDeltas) {
-  const lower = text.toLowerCase();
-  if (/\b(human counselor|human counsellor|real person|talk to.*human)\b/i.test(text)) {
-    return posture(text, "human_help_seeking", "handoff_boundary_check", "handoff_safe");
-  }
-  if (/\b(just browsing|browsing only|looking around)\b/i.test(text)) return posture(text, "just_browsing", "reassure_and_orient", "reassuring_orientation");
-  if (/\b(compare|versus|vs|better|between)\b/i.test(text)) return posture(text, "comparison_oriented", "compare_options", "decision_support");
-  if (/\b(my choice|choose|chosen|this option seems best|let'?s go with)\b/i.test(text)) return posture(text, "decision_ready", "confirm_preference", "milestone_confirmation");
-  if ((flowDrivingDeltas.coursesConsidering || []).length && (NO_UNIVERSITY_DIRECTION.test(text) || lower.includes("which university"))) {
-    return posture(text, "course_first", "route_to_university_exploration", "route_explanation");
-  }
-  if ((flowDrivingDeltas.universitiesConsidering || []).length && (NO_COURSE_DIRECTION.test(text) || lower.includes("what course"))) {
-    return posture(text, "university_first", "route_to_course_exploration", "route_explanation");
-  }
-  if (/\b(confused|undecided|not sure|don'?t know what course|do not know what course)\b/i.test(text)) return posture(text, "lost_or_confused", "reassure_and_orient", "reassuring_orientation");
-  if ((flowDrivingDeltas.pathwaysConsidering || []).length) return posture(text, "pathway_first", "route_to_pathway_exploration", "route_explanation");
-  return undefined;
-}
-
-function posture(text, postureValue, counselingImplication, suggestedResponseMode) {
-  return {
-    ...baseSignal(text, text, "high"),
-    kind: "student_posture",
-    posture: postureValue,
-    counselingImplication,
-    suggestedResponseMode
-  };
-}
-
-function quality(type, text, value) {
-  return {
-    ...baseDelta(text, text),
-    kind: "quality_enhancing",
-    type,
-    value,
-    usefulness: "medium",
-    sensitivity: /\b(financial hardship|disability|medical hardship|visa issue|legal issue)\b/i.test(text) ? "possibly_sensitive" : "none",
-    constraintStrength: /\b(can only|must|need to|cannot|can't)\b/i.test(text) ? "hard_constraint" : "soft_preference"
-  };
-}
-
-function baseDelta(text, quote, confidence = "high", promotionRisk = "none") {
-  return {
-    operation: "add_new",
-    confidence,
-    evidence: [{ quote: String(quote || text).slice(0, 160) }],
-    source: "current_message",
-    promotionRisk
-  };
-}
-
-function baseSignal(text, quote, confidence = "high", promotionRisk = "none") {
-  return {
-    confidence,
-    evidence: [{ quote: String(quote || text).slice(0, 160) }],
-    source: "current_message",
-    promotionRisk
-  };
-}
-
 function array(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function arrayOf(value) {
-  return value ? [value] : [];
-}
-
-function dedupeSignals(signals, key) {
-  const seen = new Set();
-  return signals.filter((signal) => {
-    const value = signal[key];
-    if (seen.has(value)) return false;
-    seen.add(value);
-    return true;
-  });
-}
-
-function title(value) {
-  return value.split(/\s+/).map((word) => word.toUpperCase() === "IT" ? "IT" : `${word[0].toUpperCase()}${word.slice(1)}`).join(" ");
-}
-
-function includesTerm(lowerText, term) {
-  return new RegExp(`\\b${escapeRegex(term.toLowerCase()).replace(/\\ /g, "\\s+")}\\b`).test(lowerText);
-}
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function arrayOrSingle(value) {
+  if (Array.isArray(value)) return value;
+  return value && typeof value === "object" ? [value] : [];
 }

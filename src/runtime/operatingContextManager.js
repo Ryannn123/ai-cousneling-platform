@@ -231,15 +231,15 @@ function hasKnowledgeNeed(runtimeSignals) {
 }
 
 function activeDirectionFromDeltas(flowDriving, text, previous = {}) {
-  const course = flowDriving.confirmedCounselingCoursePreference?.courseOrProgram
-    || flowDriving.coursesConsidering?.find((signal) => signal.status === "preferred")?.courseOrProgram
-    || flowDriving.coursesConsidering?.[0]?.courseOrProgram;
-  const university = flowDriving.confirmedCounselingUniversityPreference?.university
-    || flowDriving.universitiesConsidering?.find((signal) => signal.status === "preferred")?.university
-    || flowDriving.universitiesConsidering?.[0]?.university;
-  const pathway = flowDriving.confirmedCounselingPathwayPreference?.pathway
-    || flowDriving.pathwaysConsidering?.find((signal) => signal.status === "preferred")?.pathway
-    || flowDriving.pathwaysConsidering?.[0]?.pathway;
+  const course = deltaValue(flowDriving.confirmedCounselingCoursePreference)
+    || deltaValue(flowDriving.coursesConsidering?.find((signal) => signal.status === "preferred"))
+    || deltaValue(flowDriving.coursesConsidering?.[0]);
+  const university = deltaValue(flowDriving.confirmedCounselingUniversityPreference)
+    || deltaValue(flowDriving.universitiesConsidering?.find((signal) => signal.status === "preferred"))
+    || deltaValue(flowDriving.universitiesConsidering?.[0]);
+  const pathway = deltaValue(flowDriving.confirmedCounselingPathwayPreference)
+    || deltaValue(flowDriving.pathwaysConsidering?.find((signal) => signal.status === "preferred"))
+    || deltaValue(flowDriving.pathwaysConsidering?.[0]);
 
   if (!course && !university && !pathway) return COURSE.test(text) ? inferDirection(text, previous) : undefined;
   return {
@@ -248,6 +248,10 @@ function activeDirectionFromDeltas(flowDriving, text, previous = {}) {
     ...(university ? { university } : {}),
     ...(pathway ? { pathway } : {})
   };
+}
+
+function deltaValue(delta) {
+  return delta?.value || delta?.courseOrProgram || delta?.university || delta?.pathway;
 }
 
 function inferDirection(text, previous = {}) {

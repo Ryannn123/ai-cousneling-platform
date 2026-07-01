@@ -58,11 +58,11 @@ function normalizeMemoryDeltas(raw) {
     flowDrivingDeltas: {
       academicResults: array(flow.academicResults),
       coursesConsidering: array(flow.coursesConsidering),
-      confirmedCounselingCoursePreferences: array(flow.confirmedCounselingCoursePreferences),
+      confirmedCounselingCoursePreferences: arrayOrSingle(flow.confirmedCounselingCoursePreferences),
       universitiesConsidering: array(flow.universitiesConsidering),
-      confirmedCounselingUniversityPreferences: array(flow.confirmedCounselingUniversityPreferences),
+      confirmedCounselingUniversityPreferences: arrayOrSingle(flow.confirmedCounselingUniversityPreferences),
       pathwaysConsidering: array(flow.pathwaysConsidering),
-      confirmedCounselingPathwayPreferences: array(flow.confirmedCounselingPathwayPreferences)
+      confirmedCounselingPathwayPreferences: arrayOrSingle(flow.confirmedCounselingPathwayPreferences)
     },
     qualityEnhancingDeltas: array(memory.qualityEnhancingDeltas)
   };
@@ -78,9 +78,9 @@ function validateFlowDrivingDeltas(flow, rejectedCandidates, downgradedCandidate
   validateDeltaList("acceptedMemoryDeltas.flowDrivingDeltas.universitiesConsidering", flow.universitiesConsidering, rejectedCandidates, validationEvents);
   validateDeltaList("acceptedMemoryDeltas.flowDrivingDeltas.pathwaysConsidering", flow.pathwaysConsidering, rejectedCandidates, validationEvents);
 
-  validateConfirmedPreference(flow, "Course", "coursesConsidering", "courseOrProgram", rejectedCandidates, downgradedCandidates, validationEvents);
-  validateConfirmedPreference(flow, "University", "universitiesConsidering", "university", rejectedCandidates, downgradedCandidates, validationEvents);
-  validateConfirmedPreference(flow, "Pathway", "pathwaysConsidering", "pathway", rejectedCandidates, downgradedCandidates, validationEvents);
+  validateConfirmedPreference(flow, "Course", "coursesConsidering", rejectedCandidates, downgradedCandidates, validationEvents);
+  validateConfirmedPreference(flow, "University", "universitiesConsidering", rejectedCandidates, downgradedCandidates, validationEvents);
+  validateConfirmedPreference(flow, "Pathway", "pathwaysConsidering", rejectedCandidates, downgradedCandidates, validationEvents);
 }
 
 function validateQualityDeltas(deltas, rejectedCandidates, validationEvents) {
@@ -133,7 +133,7 @@ function validateDeltaList(path, deltas, rejectedCandidates, validationEvents) {
   }
 }
 
-function validateConfirmedPreference(flow, label, listKey, fieldKey, rejectedCandidates, downgradedCandidates, validationEvents) {
+function validateConfirmedPreference(flow, label, listKey, rejectedCandidates, downgradedCandidates, validationEvents) {
   const confirmedKey = `confirmedCounseling${label}Preferences`;
   const confirmed = flow[confirmedKey];
   for (let index = confirmed.length - 1; index >= 0; index -= 1) {
@@ -156,12 +156,12 @@ function validateConfirmedPreference(flow, label, listKey, fieldKey, rejectedCan
         candidatePath: `acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}.${index}`,
         originalCandidate: delta,
         downgradedCandidate: downgraded,
-        reason: `${fieldKey}_confirmation_not_explicit`
+        reason: "value_confirmation_not_explicit"
       });
       validationEvents.push({
         type: "promotion_blocked",
         severity: "warning",
-        message: `acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}.${index} downgraded: ${fieldKey}_confirmation_not_explicit.`
+        message: `acceptedMemoryDeltas.flowDrivingDeltas.${confirmedKey}.${index} downgraded: value_confirmation_not_explicit.`
       });
     }
   }
@@ -260,4 +260,9 @@ function reject(rejectedCandidates, validationEvents, candidatePath, proposedCan
 
 function array(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function arrayOrSingle(value) {
+  if (Array.isArray(value)) return value;
+  return value && typeof value === "object" ? [value] : [];
 }

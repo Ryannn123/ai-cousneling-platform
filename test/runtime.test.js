@@ -25,6 +25,323 @@ function runtimeSignals(result, kind) {
   return result.acceptedSemanticDelta.acceptedRuntimeOnlySignals.filter((signal) => signal.kind === kind);
 }
 
+function testApp(services = {}) {
+  return new CounselingTurnOrchestrator({
+    aiSemanticDeltaExtractor: testSemanticDeltaExtractor(),
+    aiExecutionClient: testExecutionClient(),
+    ...services
+  });
+}
+
+function testSemanticDeltaExtractor() {
+  return {
+    provider: "mock",
+    model: "test",
+    async extract(turnInput, fastBoundarySignals = []) {
+      return mockSemanticDelta(turnInput, fastBoundarySignals);
+    }
+  };
+}
+
+function testExecutionClient() {
+  return {
+    async execute(executionContext) {
+      return mockExecution(executionContext);
+    }
+  };
+}
+
+const TEST_COURSES = ["psychology", "business", "computer science", "it", "design", "engineering", "accounting"];
+const TEST_PATHWAYS = ["foundation", "diploma", "a-level", "a level"];
+const TEST_UNIVERSITIES = ["demo metropolitan university", "demo valley university", "demo tech institute", "university a", "university b", "sunway", "taylor's", "taylors", "monash", "apu", "inti", "help", "utar"];
+const TEST_NO_COURSE_DIRECTION = /\b(don'?t know what course|do not know what course|no course|not sure what to study|don't know what to study|do not know what to study)\b/i;
+const TEST_NO_UNIVERSITY_DIRECTION = /\b(don'?t know (which )?university|do not know (which )?university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university|what course or university)\b/i;
+
+function mockSemanticDelta(turnInput, fastBoundarySignals) {
+  const text = turnInput.studentMessage || "";
+  const flowDrivingDeltas = {
+    academicResults: arrayOf(academicResultDelta(text)),
+    coursesConsidering: courseDeltas(text),
+    confirmedCounselingCoursePreferences: arrayOf(confirmedCourseDelta(text)),
+    universitiesConsidering: universityDeltas(text),
+    confirmedCounselingUniversityPreferences: arrayOf(confirmedUniversityDelta(text)),
+    pathwaysConsidering: pathwayDeltas(text),
+    confirmedCounselingPathwayPreferences: arrayOf(confirmedPathwayDelta(text))
+  };
+  return {
+    memoryDeltaCandidates: {
+      flowDrivingDeltas,
+      qualityEnhancingDeltas: qualityDeltas(text)
+    },
+    runtimeOnlySignalCandidates: [
+      ...boundarySignals(text, fastBoundarySignals),
+      ...knowledgeNeeds(text),
+      ...arrayOf(postureSignal(text, flowDrivingDeltas)),
+      ...ambiguitySignals(text)
+    ]
+  };
+}
+
+function courseDeltas(text) {
+  const lower = text.toLowerCase();
+  return TEST_COURSES
+    .filter((course) => includesTerm(lower, course))
+    .map((course) => ({
+      ...baseDelta(text, course),
+      value: course === "it" ? "IT" : title(course),
+      status: /\bprefer\b/i.test(text) && includesTerm(lower, course) ? "preferred" : "considering"
+    }));
+}
+
+function confirmedCourseDelta(text) {
+  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(text)) return undefined;
+  const course = courseDeltas(text)[0];
+  return course ? { ...course, ...baseDelta(text, text), status: "confirmed_counseling_preference", confidence: "high" } : undefined;
+}
+
+function universityDeltas(text) {
+  const lower = text.toLowerCase();
+  return TEST_UNIVERSITIES
+    .filter((university) => includesTerm(lower, university))
+    .map((university) => ({
+      ...baseDelta(text, university),
+      value: university.includes("university ") ? title(university) : title(university).replace(/\bApu\b/, "APU").replace(/\bUtar\b/, "UTAR"),
+      status: /\bprefer\b/i.test(text) && includesTerm(lower, university) ? "preferred" : "considering"
+    }));
+}
+
+function confirmedUniversityDelta(text) {
+  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(text)) return undefined;
+  const university = universityDeltas(text)[0];
+  return university ? { ...university, ...baseDelta(text, text), status: "confirmed_counseling_preference", confidence: "high" } : undefined;
+}
+
+function pathwayDeltas(text) {
+  const lower = text.toLowerCase();
+  return TEST_PATHWAYS
+    .filter((pathway) => lower.includes(pathway))
+    .map((pathway) => ({
+      ...baseDelta(text, pathway),
+      value: title(pathway),
+      status: /\bprefer\b/i.test(text) && lower.includes(pathway) ? "preferred" : "considering"
+    }));
+}
+
+function confirmedPathwayDelta(text) {
+  if (!/\b(my choice|choose|chosen|let'?s go with)\b/i.test(text)) return undefined;
+  const pathway = pathwayDeltas(text)[0];
+  return pathway ? { ...pathway, ...baseDelta(text, text), status: "confirmed_counseling_preference", confidence: "high" } : undefined;
+}
+
+function academicResultDelta(text) {
+  const match = text.match(/\b(spm|a[- ]?level|foundation|diploma|cgpa|gpa|result|results|grades?|credits?)\b[^.?!]*/i);
+  return match ? { ...baseDelta(text, match[0]), value: match[0].trim() } : undefined;
+}
+
+function boundarySignals(text, fastBoundarySignals = []) {
+  return fastBoundarySignals.map((signal) => ({
+    ...baseSignal(text, signal.matchedText, "high", signal.severityCandidate === "red" ? "official_action_risk" : "requires_confirmation"),
+    kind: "boundary",
+    type: signal.type,
+    triggerType: signal.triggerType,
+    severityCandidate: signal.severityCandidate,
+    recommendedBehavior: signal.recommendedBehavior === "clarify_once" ? "clarify_once" : "handoff"
+  }));
+}
+
+function knowledgeNeeds(text) {
+  const patterns = [
+    ["fees", /\b(fee|fees|cost|tuition)\b/i],
+    ["entry_requirements", /\b(entry requirement|requirements?|qualify|eligible|eligibility)\b/i],
+    ["ranking", /\b(ranking|rank|ranked|higher)\b/i]
+  ];
+  return patterns
+    .filter(([, pattern]) => pattern.test(text))
+    .map(([type, pattern]) => ({
+      ...baseSignal(text, text.match(pattern)?.[0] || text),
+      kind: "knowledge_need",
+      type,
+      query: text,
+      decisionCriticality: type === "entry_requirements" ? "decision_critical" : "possibly_decision_critical"
+    }));
+}
+
+function ambiguitySignals(text) {
+  if (!/\b(actually|instead|anymore|not sure anymore|i said .* earlier|now i prefer)\b/i.test(text)) return [];
+  const newCourse = courseDeltas(text).find((delta) => !/\b(don'?t want|do not want|not)\b/i.test(text.slice(Math.max(0, text.toLowerCase().indexOf(delta.value.toLowerCase()) - 20), text.toLowerCase().indexOf(delta.value.toLowerCase()))));
+  return [{
+    ...baseSignal(text, text, "medium", "requires_confirmation"),
+    kind: "ambiguity",
+    type: /\bnot sure anymore\b/i.test(text) ? "preference_downgrade" : "direction_change",
+    newClaim: newCourse ? { value: newCourse.value } : { message: text },
+    recommendedBehavior: "clarify_once"
+  }];
+}
+
+function qualityDeltas(text) {
+  const deltas = [];
+  if (/\b(budget|affordable|cheap|low cost|value)\b/i.test(text)) deltas.push({ ...quality("constraint", text, { budget: "important" }), usefulness: "high" });
+  if (/\b(ranking|prestige|reputation)\b/i.test(text)) deltas.push({ ...quality("preference", text, { fit: "ranking_or_prestige" }), usefulness: "high" });
+  if (/\b(kl|kuala lumpur|selangor|penang|johor|nearby|near campus)\b/i.test(text)) deltas.push({ ...quality("preference", text, { location: "stated_location" }), usefulness: "high" });
+  if (/\b(coffee|movie|football)\b/i.test(text)) deltas.push({ ...quality("other", text, { trivia: text }), usefulness: "low" });
+  return deltas;
+}
+
+function postureSignal(text, flowDrivingDeltas) {
+  const lower = text.toLowerCase();
+  if (/\b(human counselor|human counsellor|real person|talk to.*human)\b/i.test(text)) return posture(text, "human_help_seeking", "handoff_boundary_check", "handoff_safe");
+  if (/\b(just browsing|browsing only|looking around)\b/i.test(text)) return posture(text, "just_browsing", "reassure_and_orient", "reassuring_orientation");
+  if (/\b(compare|versus|vs|better|between)\b/i.test(text)) return posture(text, "comparison_oriented", "compare_options", "decision_support");
+  if (/\b(my choice|choose|chosen|this option seems best|let'?s go with)\b/i.test(text)) return posture(text, "decision_ready", "confirm_preference", "milestone_confirmation");
+  if ((flowDrivingDeltas.coursesConsidering || []).length && (TEST_NO_UNIVERSITY_DIRECTION.test(text) || lower.includes("which university"))) return posture(text, "course_first", "route_to_university_exploration", "route_explanation");
+  if ((flowDrivingDeltas.universitiesConsidering || []).length && (TEST_NO_COURSE_DIRECTION.test(text) || lower.includes("what course"))) return posture(text, "university_first", "route_to_course_exploration", "route_explanation");
+  if (/\b(confused|undecided|not sure|don'?t know what course|do not know what course)\b/i.test(text)) return posture(text, "lost_or_confused", "reassure_and_orient", "reassuring_orientation");
+  if ((flowDrivingDeltas.pathwaysConsidering || []).length) return posture(text, "pathway_first", "route_to_pathway_exploration", "route_explanation");
+  return undefined;
+}
+
+function posture(text, postureValue, counselingImplication, suggestedResponseMode) {
+  return { ...baseSignal(text, text, "high"), kind: "student_posture", posture: postureValue, counselingImplication, suggestedResponseMode };
+}
+
+function quality(type, text, value) {
+  return { ...baseDelta(text, text), kind: "quality_enhancing", type, value, usefulness: "medium", sensitivity: "none", constraintStrength: type === "constraint" ? "hard_constraint" : "soft_preference" };
+}
+
+function baseDelta(text, quote, confidence = "high", promotionRisk = "none") {
+  return { operation: "add_new", confidence, evidence: [{ quote: String(quote || text).slice(0, 160) }], source: "current_message", promotionRisk };
+}
+
+function baseSignal(text, quote, confidence = "high", promotionRisk = "none") {
+  return { confidence, evidence: [{ quote: String(quote || text).slice(0, 160) }], source: "current_message", promotionRisk };
+}
+
+function arrayOf(value) {
+  return value ? [value] : [];
+}
+
+function title(value) {
+  return value.split(/\s+/).map((word) => word.toUpperCase() === "IT" ? "IT" : `${word[0].toUpperCase()}${word.slice(1)}`).join(" ");
+}
+
+function includesTerm(lowerText, term) {
+  return new RegExp(`\\b${escapeRegex(term.toLowerCase()).replace(/\\ /g, "\\s+")}\\b`).test(lowerText);
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mockExecution(executionContext) {
+  const { operatingContext, boundaryResult, studentMessage, knowledgeContext } = executionContext;
+  const baseFlags = {
+    needsClarification: boundaryResult.allowedNextBehavior === "clarify",
+    boundarySensitive: boundaryResult.finalZone !== "green",
+    officialActionRisk: boundaryResult.finalZone === "red",
+    memoryWriteRequiresValidation: true,
+    knowledgeUsed: Boolean(knowledgeContext),
+    knowledgeUncertain: knowledgeContext?.uncertaintyLevel === "decision_critical"
+  };
+
+  if (boundaryResult.allowedNextBehavior === "handoff") {
+    return {
+      response: {
+        studentMessage: "I can help prepare the next step, but application, registration, payment, or seat confirmation needs a human counselor. I will prepare a handoff summary so the team can continue with you.",
+        responseIntent: "handoff"
+      },
+      proposedContextUpdate: { currentMainState: "S7", primaryCounselingAction: "A12", handoffStatus: "prepared", preferenceStrength: "L5" },
+      proposedOutputs: {
+        memoryOutputs: [
+          { type: "readiness_to_register_signal", value: { message: studentMessage }, confidence: "high", evidence: studentMessage },
+          { type: "handoff_required", value: { triggerType: boundaryResult.triggerType }, confidence: "high", evidence: boundaryResult.aiBoundaryReason }
+        ],
+        recommendationOutputs: [],
+        handoffOutput: {
+          required: true,
+          triggerType: boundaryResult.triggerType,
+          reason: boundaryResult.aiBoundaryReason,
+          summary: `Student said: "${studentMessage}". Human counselor should handle official next steps.`
+        }
+      },
+      validationFlags: baseFlags
+    };
+  }
+
+  if (boundaryResult.allowedNextBehavior === "clarify") {
+    return {
+      response: {
+        studentMessage: "When you say proceed, do you mean this is your counseling preference for now, or that you want to apply or register officially?",
+        responseIntent: "ask_clarification"
+      },
+      proposedContextUpdate: { primaryCounselingAction: "A8" },
+      proposedOutputs: { memoryOutputs: [], recommendationOutputs: [] },
+      validationFlags: baseFlags
+    };
+  }
+
+  if (operatingContext.primaryCounselingAction === "A5") {
+    const facts = knowledgeContext?.sources?.facts || [];
+    const factText = facts.length
+      ? facts.map((fact) => `${fact.program} at ${fact.university}: ${fact.location}, about MYR ${fact.annualFeeMyr}/year, ${fact.pathwayDuration}.`).join(" ")
+      : knowledgeContext?.sources?.caveat || "I do not have a verified fact for that in the prototype catalog.";
+    return executionResult("answer", `${factText} After that, we can return to choosing the best-fit direction.`, {
+      proposedContextUpdate: { overlayState: "S9" },
+      memoryOutputs: [{ type: "factual_detour_answered", value: { answerable: facts.length > 0 }, confidence: facts.length ? "medium" : "low", evidence: studentMessage }]
+    }, baseFlags);
+  }
+
+  if (operatingContext.primaryCounselingAction === "A2") {
+    return executionResult("ask_clarification", "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.", {
+      memoryOutputs: [{ type: "minimum_profile_requested", value: {}, confidence: "high", evidence: "Minimum profile incomplete." }]
+    }, baseFlags);
+  }
+
+  if (operatingContext.primaryCounselingAction === "A6") {
+    return executionResult("recommend", "You already have enough direction for a first counseling recommendation. Based on what you shared, I can make a medium-confidence suggestion and then refine it with one fit question. Psychology could fit if you want people-focused work; Business stays broader if you want management, marketing, or finance flexibility. Which matters more to you now: career direction, budget, or location?", {
+      proposedContextUpdate: { currentMainState: "S4", recommendationReadiness: "R2" },
+      recommendationOutputs: [{
+        option: "R2 directional shortlist based on current course or pathway direction",
+        fitReasons: ["Uses the student's academic result and stated direction"],
+        assumptions: ["University-fit details can still refine the recommendation"],
+        cautions: ["Counseling recommendation only; not admission or registration approval"],
+        confidence: "medium"
+      }]
+    }, baseFlags);
+  }
+
+  if (operatingContext.primaryCounselingAction === "A7") {
+    return executionResult("compare", "You are comparing directions, so the useful move is to narrow by trade-off instead of adding more options. Psychology is stronger if you want counseling, HR, or human behavior. Business is broader if you want management, marketing, or finance flexibility. Which trade-off matters more to you: focused interest or broader flexibility?", {
+      proposedContextUpdate: { currentMainState: "S5" },
+      memoryOutputs: [{ type: "shortlist", value: { options: ["Psychology", "Business"] }, confidence: "medium", evidence: studentMessage }]
+    }, baseFlags);
+  }
+
+  if (operatingContext.primaryCounselingAction === "A9") {
+    return executionResult("confirm_preference", "For counseling purposes, I can treat this as your current preferred direction. This is not an application, registration, payment, enrollment, seat reservation, or CRM update. It just gives us a clear counseling milestone; from here, you can compare one final alternative, take time to think, or speak with a human counselor for official next steps.", {
+      proposedContextUpdate: { currentMainState: "S6", preferenceStrength: "L4" },
+      memoryOutputs: [{ type: "confirmed_counseling_preference", value: { direction: studentMessage }, confidence: "medium", evidence: studentMessage }]
+    }, baseFlags);
+  }
+
+  return executionResult("answer", "It sounds like you are still finding the right direction. We can start broad and use your strengths, disliked subjects, and career interest to narrow the route before talking about university fit. What kind of subjects or work do you usually prefer?", {
+    proposedContextUpdate: { currentMainState: "S3", primaryCounselingAction: "A3" },
+    memoryOutputs: [{ type: "exploration_prompted", value: {}, confidence: "medium", evidence: studentMessage }]
+  }, baseFlags);
+}
+
+function executionResult(responseIntent, studentMessage, proposals, flags) {
+  return {
+    response: { studentMessage, responseIntent },
+    proposedContextUpdate: proposals.proposedContextUpdate || {},
+    proposedOutputs: {
+      memoryOutputs: proposals.memoryOutputs || [],
+      recommendationOutputs: proposals.recommendationOutputs || [],
+      handoffOutput: proposals.handoffOutput
+    },
+    validationFlags: flags
+  };
+}
+
 test("boundary detection catches apply/register/payment/official action language", () => {
   const engine = new BoundaryEngine();
   for (const message of ["I want to apply now", "Can you register me?", "How do I pay?", "Can you reserve my seat?"]) {
@@ -59,7 +376,7 @@ test("validation blocks official-action memory outputs", () => {
 });
 
 test("confirmed counseling preference cannot become official registration state", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -76,7 +393,7 @@ test("confirmed counseling preference cannot become official registration state"
 });
 
 test("weak interest is not over-promoted to confirmed preference", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -89,7 +406,7 @@ test("weak interest is not over-promoted to confirmed preference", async () => {
 });
 
 test("phase 4 extracts course university and pathway considering fields", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -97,13 +414,13 @@ test("phase 4 extracts course university and pathway considering fields", async 
   });
 
   const flowDriving = flowDrivingDeltas(result);
-  assert.equal(flowDriving.coursesConsidering[0].courseOrProgram, "Psychology");
-  assert.equal(flowDriving.universitiesConsidering[0].university, "University A");
-  assert.equal(flowDriving.pathwaysConsidering[0].pathway, "Foundation");
+  assert.equal(flowDriving.coursesConsidering[0].value, "Psychology");
+  assert.equal(flowDriving.universitiesConsidering[0].value, "University A");
+  assert.equal(flowDriving.pathwaysConsidering[0].value, "Foundation");
 });
 
 test("route profile sends no course or university direction to course/pathway exploration", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -119,7 +436,7 @@ test("route profile sends no course or university direction to course/pathway ex
 });
 
 test("route profile sends course-first student to university exploration and allows R2", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -134,7 +451,7 @@ test("route profile sends course-first student to university exploration and all
 });
 
 test("route profile sends university-first student to course exploration in university context", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -148,7 +465,7 @@ test("route profile sends university-first student to course exploration in univ
 });
 
 test("budget ranking and location are quality signals not minimum profile gates", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -158,11 +475,11 @@ test("budget ranking and location are quality signals not minimum profile gates"
   const qualityDeltas = qualityEnhancingDeltas(result);
   assert.equal(flowDrivingDeltas(result).academicResults.length, 0);
   assert.equal(result.operatingContext.profileCompleteness, "incomplete");
-  assert.deepEqual(qualityDeltas.map((delta) => delta.type), ["budget_sensitivity", "university_fit_preference", "location_preference"]);
+  assert.deepEqual(qualityDeltas.map((delta) => delta.type), ["constraint", "preference", "preference"]);
 });
 
 test("student posture signals are accepted as runtime-only signals", async () => {
-  const extractor = new AISemanticDeltaExtractor({ provider: "openai" });
+  const extractor = testSemanticDeltaExtractor();
   const cases = [
     ["I'm just browsing.", "just_browsing"],
     ["I already want Psychology, but I don't know which university.", "course_first"],
@@ -215,7 +532,7 @@ allowed_memory_outputs:
 });
 
 test("phase 4 rejects irrelevant quality noise", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -227,7 +544,7 @@ test("phase 4 rejects irrelevant quality noise", async () => {
 });
 
 test("phase 4 knowledge needs are accepted for fees entry requirements and ranking", async () => {
-  const extractor = new AISemanticDeltaExtractor({ provider: "openai" });
+  const extractor = testSemanticDeltaExtractor();
   const result = await extractor.extract({
     conversationId: "test",
     turnId: "turn",
@@ -266,7 +583,7 @@ test("openai semantic delta extractor passes SemanticDeltaResult schema", async 
     assert.ok(capturedRequest.body.text.format.schema.required.includes("memoryDeltaCandidates"));
     assert.equal(capturedRequest.body.text.format.schema.properties.conversationId, undefined);
     assert.equal(capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas.properties.minimumProfileSignals, undefined);
-    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].courseOrProgram, "Psychology");
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].value, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -310,7 +627,7 @@ test("gemini semantic delta extractor passes concise JSON schema without platfor
     const flowSchema = capturedRequest.body.response_format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas;
     assert.equal(flowSchema.properties.coursesConsidering.items.properties.source, undefined);
     assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
-    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].courseOrProgram, "Psychology");
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].value, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -459,7 +776,7 @@ test("raw semantic delta layer requires a provider API key", async () => {
 });
 
 test("phase 4 direction change creates runtime-only ambiguity without rewriting active direction", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -477,7 +794,7 @@ test("phase 4 direction change creates runtime-only ambiguity without rewriting 
 });
 
 test("phase 4 audit records accepted rejected and downgraded semantic deltas", async () => {
-  const app = new CounselingTurnOrchestrator({
+  const app = testApp({
     aiSemanticDeltaExtractor: {
       provider: "mock",
       model: "test",
@@ -489,7 +806,7 @@ test("phase 4 audit records accepted rejected and downgraded semantic deltas", a
               coursesConsidering: [],
               confirmedCounselingCoursePreferences: [{
                 operation: "add_new",
-                courseOrProgram: "Psychology",
+                value: "Psychology",
                 status: "confirmed_counseling_preference",
                 confidence: "high",
                 evidence: [{ quote: "I prefer Psychology" }]
@@ -523,11 +840,11 @@ test("phase 4 audit records accepted rejected and downgraded semantic deltas", a
 
   assert.ok(result.auditEvent.semanticDeltaAudit.acceptedSemanticDelta);
   assert.ok(result.auditEvent.semanticDeltaAudit.rejectedCandidates.some((candidate) => candidate.reason === "quality_signal_low_usefulness"));
-  assert.ok(result.auditEvent.semanticDeltaAudit.downgradedCandidates.some((candidate) => candidate.reason === "courseOrProgram_confirmation_not_explicit"));
+  assert.ok(result.auditEvent.semanticDeltaAudit.downgradedCandidates.some((candidate) => candidate.reason === "value_confirmation_not_explicit"));
 });
 
 test("phase 4 invalid semantic delta evidence falls back safely", async () => {
-  const app = new CounselingTurnOrchestrator({
+  const app = testApp({
     aiSemanticDeltaExtractor: {
       provider: "mock",
       model: "test",
@@ -538,7 +855,7 @@ test("phase 4 invalid semantic delta evidence falls back safely", async () => {
               academicResults: [],
               coursesConsidering: [{
                 operation: "add_new",
-                courseOrProgram: "Psychology",
+                value: "Psychology",
                 status: "considering",
                 confidence: "high",
                 evidence: []
@@ -589,7 +906,7 @@ test("knowledge gateway answers only from seed catalog and caveats unknowns", as
 });
 
 test("phase 12 scenario reaches recommendation, comparison, preference, handoff, and audit evidence", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
 
   const opening = await app.handleTurn({
@@ -642,7 +959,7 @@ test("phase 12 scenario reaches recommendation, comparison, preference, handoff,
 });
 
 test("ambiguous proceed after recommendation clarifies without confirming preference", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -661,7 +978,7 @@ test("ambiguous proceed after recommendation clarifies without confirming prefer
 });
 
 test("official-action wording variants hand off instead of continuing counseling", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
 
   for (const studentMessage of [
     "I want to submit my application today.",
@@ -678,7 +995,7 @@ test("official-action wording variants hand off instead of continuing counseling
 });
 
 test("detour answer resumes normal journey on the next turn", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -702,7 +1019,7 @@ test("detour answer resumes normal journey on the next turn", async () => {
 });
 
 test("unknown factual detour is caveated and recorded as low-confidence knowledge gap", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -717,7 +1034,7 @@ test("unknown factual detour is caveated and recorded as low-confidence knowledg
 });
 
 test("human-requested support produces red-zone handoff", async () => {
-  const app = new CounselingTurnOrchestrator();
+  const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -730,7 +1047,7 @@ test("human-requested support produces red-zone handoff", async () => {
 });
 
 test("invalid AI official-action output is blocked before commit", async () => {
-  const app = new CounselingTurnOrchestrator({
+  const app = testApp({
     aiExecutionClient: {
       async execute() {
         return {
@@ -876,7 +1193,7 @@ function semanticDeltaFixture() {
         academicResults: [],
         coursesConsidering: [{
           operation: "add_new",
-          courseOrProgram: "Psychology",
+          value: "Psychology",
           status: "considering",
           confidence: "high",
           evidence: [{ quote: "Psychology sounds interesting" }]
@@ -900,7 +1217,7 @@ function conciseSemanticDeltaFixture() {
         academicResults: [],
         coursesConsidering: [{
           operation: "add_new",
-          courseOrProgram: "Psychology",
+          value: "Psychology",
           status: "considering",
           confidence: "high",
           evidence: [{ quote: "Psychology sounds interesting" }]
@@ -914,7 +1231,7 @@ function conciseSemanticDeltaFixture() {
       qualityEnhancingDeltas: [{
         operation: "add_new",
         kind: "quality_enhancing",
-        type: "career_interest",
+        type: "goal_or_motivation",
         value: { interest: "people focused" },
         usefulness: "high",
         sensitivity: "none",
@@ -929,3 +1246,4 @@ function conciseSemanticDeltaFixture() {
 function rawSemanticDeltaFixture() {
   return semanticDeltaFixture();
 }
+
