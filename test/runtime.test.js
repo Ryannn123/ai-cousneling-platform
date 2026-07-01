@@ -10,6 +10,7 @@ import { ValidationPipeline } from "../src/runtime/validationPipeline.js";
 import { CounselingTurnOrchestrator } from "../src/runtime/counselingTurnOrchestrator.js";
 import { AIExecutionClient } from "../src/runtime/aiExecutionClient.js";
 import { AIInterpretationClient } from "../src/runtime/aiInterpretationClient.js";
+import { parseLlmInterpretation } from "../src/runtime/interpretationLayer.js";
 import { InterpretationValidator } from "../src/runtime/interpretationValidator.js";
 
 test("boundary detection catches apply/register/payment/official action language", () => {
@@ -363,6 +364,85 @@ test("gemini interpretation client surfaces live Gemini 400", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("raw interpretation layer returns parsed OpenAI output without hydration or fast boundary input", async () => {
+  const originalFetch = globalThis.fetch;
+  const rawInterpretation = rawInterpretationFixture();
+  let capturedRequest;
+  globalThis.fetch = async (url, options) => {
+    capturedRequest = { url: String(url), body: JSON.parse(options.body) };
+    return {
+      ok: true,
+      async json() {
+        return { output_text: JSON.stringify(rawInterpretation) };
+      }
+    };
+  };
+
+  try {
+    const result = await parseLlmInterpretation({
+      studentMessage: "Psychology sounds interesting.",
+      recentConversationSummary: "student: hello"
+    }, { provider: "openai", openaiApiKey: "test-key", model: "gpt-test" });
+
+    assert.match(capturedRequest.url, /api\.openai\.com\/v1\/responses/);
+    assert.deepEqual(JSON.parse(capturedRequest.body.input[1].content), {
+      studentMessage: "Psychology sounds interesting.",
+      recentConversationSummary: "student: hello"
+    });
+    assert.deepEqual(result, rawInterpretation);
+    assert.equal(result.conversationId, undefined);
+    assert.equal(result.flowDriving.coursesConsidering[0].source, undefined);
+    assert.equal(result.flowDriving.coursesConsidering[0].promotionRisk, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("raw interpretation layer returns parsed Gemini output without hydration or fast boundary input", async () => {
+  const originalFetch = globalThis.fetch;
+  const rawInterpretation = rawInterpretationFixture();
+  let capturedRequest;
+  globalThis.fetch = async (url, options) => {
+    capturedRequest = { url: String(url), body: JSON.parse(options.body) };
+    return {
+      ok: true,
+      async json() {
+        return {
+          steps: [{
+            type: "model_output",
+            content: [{ type: "text", text: JSON.stringify(rawInterpretation) }]
+          }]
+        };
+      }
+    };
+  };
+
+  try {
+    const result = await parseLlmInterpretation({
+      studentMessage: "Psychology sounds interesting.",
+      recentConversationSummary: "student: hello"
+    }, { provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
+
+    assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+    assert.deepEqual(JSON.parse(capturedRequest.body.input), {
+      studentMessage: "Psychology sounds interesting.",
+      recentConversationSummary: "student: hello"
+    });
+    assert.deepEqual(result, rawInterpretation);
+    assert.equal(result.conversationId, undefined);
+    assert.equal(result.flowDriving.coursesConsidering[0].source, undefined);
+    assert.equal(result.flowDriving.coursesConsidering[0].promotionRisk, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("raw interpretation layer requires a provider API key", async () => {
+  await assert.rejects(parseLlmInterpretation({
+    studentMessage: "Psychology sounds interesting."
+  }, { provider: "openai", openaiApiKey: "" }), /API key is required/);
 });
 
 test("phase 4 direction change creates contradiction and switches active direction", async () => {
@@ -836,6 +916,35 @@ function conciseInterpretationFixture() {
       confidence: "medium",
       evidence: [{ quote: "people focused" }]
     }],
+    boundaryCandidateSignals: [],
+    knowledgeNeedSignals: [],
+    contradictionSignals: [],
+    confidenceSummary: {
+      overallConfidence: "medium",
+      requiresClarification: false
+    }
+  };
+}
+
+function rawInterpretationFixture() {
+  return {
+    flowDriving: {
+      coursesConsidering: [{
+        courseOrProgram: "Psychology",
+        status: "considering",
+        confidence: "high",
+        evidence: [{ quote: "Psychology sounds interesting" }]
+      }],
+      universitiesConsidering: [],
+      pathwaysConsidering: [],
+      minimumProfileSignals: {
+        academicResultKnown: false,
+        courseDirectionStatusKnown: true,
+        universityDirectionStatusKnown: false,
+        courseDirectionStatus: "considering_some_courses"
+      }
+    },
+    qualityEnhancingSignals: [],
     boundaryCandidateSignals: [],
     knowledgeNeedSignals: [],
     contradictionSignals: [],

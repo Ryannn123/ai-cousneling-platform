@@ -25,6 +25,12 @@ export class AIInterpretationClient {
     return this.interpretLive(turnInput, fastBoundarySignals);
   }
 
+  async interpretRaw(turnInput) {
+    if (!this.hasApiKey()) throw new Error("AI interpretation API key is required for raw interpretation");
+    if (this.provider === "gemini") return this.interpretGeminiRaw(turnInput);
+    return this.interpretOpenAiRaw(turnInput);
+  }
+
   async interpretLive(turnInput, fastBoundarySignals) {
     if (this.provider === "gemini") return this.interpretGeminiLive(turnInput, fastBoundarySignals);
     return this.interpretOpenAiLive(turnInput, fastBoundarySignals);
@@ -35,6 +41,16 @@ export class AIInterpretationClient {
   }
 
   async interpretOpenAiLive(turnInput, fastBoundarySignals) {
+    const text = await this.fetchOpenAiInterpretationText(turnInput, fastBoundarySignals);
+    return parseInterpretation(text, "OpenAI", turnInput);
+  }
+
+  async interpretOpenAiRaw(turnInput) {
+    const text = await this.fetchOpenAiInterpretationText(turnInput);
+    return parseRawInterpretation(text, "OpenAI");
+  }
+
+  async fetchOpenAiInterpretationText(turnInput, fastBoundarySignals) {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -50,7 +66,7 @@ export class AIInterpretationClient {
           },
           {
             role: "user",
-            content: JSON.stringify({ ...turnInput, fastBoundarySignals })
+            content: JSON.stringify(interpretationInput(turnInput, fastBoundarySignals))
           }
         ],
         text: {
@@ -67,7 +83,7 @@ export class AIInterpretationClient {
     const text = payload.output_text || payload.output?.flatMap((item) => item.content || [])
       .find((content) => content.type === "output_text")?.text;
     if (!text) throw new Error("OpenAI interpretation response did not include output text");
-    return parseInterpretation(text, "OpenAI", turnInput);
+    return text;
   }
 
   async interpretGeminiLive(turnInput, fastBoundarySignals) {
@@ -84,27 +100,46 @@ export class AIInterpretationClient {
     }
     return parseGeminiInterpretationResponse(response, turnInput);
   }
+
+  async interpretGeminiRaw(turnInput) {
+    const url = new URL("https://generativelanguage.googleapis.com/v1beta/interactions");
+    const request = geminiInterpretationRequest(turnInput, undefined, this.model);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.geminiApiKey },
+      body: JSON.stringify(request)
+    });
+    if (!response.ok) {
+      throw new Error(`Gemini API returned ${response.status}: ${await responseText(response)}`);
+    }
+
+    const payload = await response.json();
+    const text = geminiInteractionText(payload);
+    if (!text) throw new Error("Gemini interpretation response did not include output text");
+    return parseRawInterpretation(text, "Gemini");
+  }
 }
 
 function geminiInterpretationRequest(turnInput, fastBoundarySignals, model) {
   return {
     model: cleanGeminiModelName(model),
     system_instruction: "Extract counseling interpretation as JSON. Do not include conversationId, turnId, messageId, source, or promotionRisk; the platform fills those fields. Include short evidence quotes for extracted signals. The result is a proposal, not truth. Do not create official application, registration, payment, enrollment, seat, or CRM truth.",
-    input: JSON.stringify({ ...turnInput, fastBoundarySignals }),
+    input: JSON.stringify(interpretationInput(turnInput, fastBoundarySignals)),
     store: false,
     response_format: {
       type: "text",
       mime_type: "application/json",
-      schema: geminiInterpretationResultSchema()
+      schema: geminiRawInterpretationResultSchema()
     }
   };
 }
 
 async function parseGeminiInterpretationResponse(response, turnInput) {
   const payload = await response.json();
-  console.dir(payload, {depth: null, colors: true})
   const text = geminiInteractionText(payload);
   if (!text) throw new Error("Gemini interpretation response did not include output text");
+  console.dir(JSON.parse(text), {depth: null, colors: true})
   return parseInterpretation(text, "Gemini", turnInput);
 }
 
@@ -140,6 +175,19 @@ function parseInterpretation(text, providerName, turnInput = {}) {
   } catch {
     throw new Error(`${providerName} returned non-JSON InterpretationResult`);
   }
+}
+
+function parseRawInterpretation(text, providerName) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${providerName} returned non-JSON InterpretationResult`);
+  }
+}
+
+function interpretationInput(turnInput, fastBoundarySignals) {
+  if (fastBoundarySignals === undefined) return { ...turnInput };
+  return { ...turnInput, fastBoundarySignals };
 }
 
 function hydrateInterpretation(raw, turnInput = {}) {
@@ -480,6 +528,51 @@ function stringEnum(values) {
 
 function looseObjectSchema() {
   return { type: "object", additionalProperties: true };
+}
+
+function geminiRawInterpretationResultSchema() {
+  return {
+    type: "object",
+    required: [
+      "flowDriving",
+      "qualityEnhancingSignals",
+      "boundaryCandidateSignals",
+      "knowledgeNeedSignals",
+      "contradictionSignals",
+      "confidenceSummary"
+    ],
+    properties: {
+      flowDriving: {
+        type: "object",
+        required: ["coursesConsidering", "universitiesConsidering", "pathwaysConsidering"],
+        properties: {
+          coursesConsidering: { type: "array", items: geminiSignalSchema({ courseOrProgram: { type: "string" }, status: stringEnum(["considering", "preferred", "confirmed_counseling_preference", "rejected"]) }, ["courseOrProgram", "status"]) },
+          confirmedCounselingCoursePreference: geminiSignalSchema({ courseOrProgram: { type: "string" }, status: stringEnum(["confirmed_counseling_preference"]) }, ["courseOrProgram", "status"]),
+          universitiesConsidering: { type: "array", items: geminiSignalSchema({ university: { type: "string" }, status: stringEnum(["considering", "preferred", "confirmed_counseling_preference", "rejected"]) }, ["university", "status"]) },
+          confirmedCounselingUniversityPreference: geminiSignalSchema({ university: { type: "string" }, status: stringEnum(["confirmed_counseling_preference"]) }, ["university", "status"]),
+          pathwaysConsidering: { type: "array", items: geminiSignalSchema({ pathway: { type: "string" }, status: stringEnum(["considering", "preferred", "confirmed_counseling_preference", "rejected"]) }, ["pathway", "status"]) },
+          confirmedCounselingPathwayPreference: geminiSignalSchema({ pathway: { type: "string" }, status: stringEnum(["confirmed_counseling_preference"]) }, ["pathway", "status"]),
+          academicResult: geminiSignalSchema({ value: { type: "string" } }, ["value"]),
+          readinessToRegisterSignal: geminiSignalSchema({ intent: stringEnum(["apply_now", "register_now", "enroll_now", "pay_now", "reserve_seat"]), triggerType: stringEnum(["H1", "H2", "H3"]) }, ["intent", "triggerType"])
+        }
+      },
+      qualityEnhancingSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["concern", "budget_sensitivity", "university_fit_preference", "location_preference", "family_influence", "learning_preference", "study_mode_preference", "timeline_preference", "career_interest", "personality_preference", "other"]), value: looseObjectSchema(), usefulness: stringEnum(["low", "medium", "high"]), sensitivity: stringEnum(["none", "possibly_sensitive", "sensitive"]) }, ["type", "value", "usefulness", "sensitivity"]) },
+      studentPostureSignal: geminiSignalSchema({ posture: stringEnum(["just_browsing", "lost_or_confused", "course_first", "university_first", "pathway_first", "comparison_oriented", "validation_seeking", "decision_ready", "indecisive", "constraint_driven", "human_help_seeking"]), counselingImplication: stringEnum(["reassure_and_orient", "route_to_course_exploration", "route_to_university_exploration", "route_to_pathway_exploration", "compare_options", "validate_fit", "confirm_preference", "support_indecision", "handoff_boundary_check"]), suggestedResponseMode: stringEnum(["reassuring_orientation", "route_explanation", "decision_support", "summary_checkpoint", "milestone_confirmation", "clarify_once", "handoff_safe"]) }, ["posture", "counselingImplication"]),
+      boundaryCandidateSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["ready_to_apply_or_register", "official_action_request", "payment_or_seat_request", "exception_or_waiver_request", "sensitive_context", "human_requested_support", "ambiguous_proceed_language"]), triggerType: stringEnum(["H1", "H2", "H3", "H4", "H5", "H6"]), severityCandidate: stringEnum(["yellow", "red"]), recommendedBehavior: stringEnum(["continue", "clarify_once", "handoff"]) }, ["type", "severityCandidate", "recommendedBehavior"]) },
+      knowledgeNeedSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["fees", "entry_requirements", "eligibility", "intake", "duration", "campus_location", "ranking", "scholarship", "specific_program_fact", "specific_university_fact", "pathway_requirement"]), query: { type: "string" }, decisionCriticality: stringEnum(["not_decision_critical", "possibly_decision_critical", "decision_critical"]) }, ["type", "query", "decisionCriticality"]) },
+      contradictionSignals: { type: "array", items: geminiSignalSchema({ type: stringEnum(["correction", "direction_change", "preference_downgrade", "constraint_conflict", "profile_conflict"]), conflictsWith: looseObjectSchema(), newClaim: looseObjectSchema(), recommendedBehavior: stringEnum(["update_current_truth", "preserve_history_and_switch_active_direction", "ask_clarification"]) }, ["type", "newClaim", "recommendedBehavior"]) },
+      confidenceSummary: {
+        type: "object",
+        required: ["overallConfidence", "requiresClarification"],
+        properties: {
+          overallConfidence: stringEnum(["low", "medium", "high"]),
+          requiresClarification: { type: "boolean" },
+          clarificationReason: { type: "string" },
+          highestRiskSignal: { type: "string" }
+        }
+      }
+    }
+  };
 }
 
 function geminiInterpretationResultSchema() {
