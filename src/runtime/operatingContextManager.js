@@ -9,35 +9,34 @@ const COMPARE = /\b(compare|versus|vs|shortlist|better|between)\b/i;
 const DEFERRAL = /\b(not sure|think about|later|maybe|undecided|confused)\b/i;
 const CONFIRM_PREF = /\b(my choice|choose|let'?s go with|this option|for now|prefer .+ over)\b/i;
 const NO_COURSE_DIRECTION = /\b(don'?t know what course|do not know what course|no course|not sure what to study|don't know what to study|do not know what to study)\b/i;
-const NO_UNIVERSITY_DIRECTION = /\b(don'?t know which university|do not know which university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university)\b/i;
+const NO_UNIVERSITY_DIRECTION = /\b(don'?t know (which )?university|do not know (which )?university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university|what course or university)\b/i;
 
 export class OperatingContextManager {
-  build(previousRuntimeState, turnInput, boundaryResult, acceptedInterpretation) {
+  build(previousRuntimeState, turnInput, boundaryResult, acceptedSemanticDelta) {
     const previous = previousRuntimeState?.operatingContext || DEFAULT_CONTEXT;
     const context = structuredClone(previous);
     const text = turnInput.studentMessage || "";
-    const accepted = acceptedInterpretation?.accepted;
-    const flowDriving = accepted?.flowDriving || {};
+    const flowDriving = flowDrivingFromSemanticDelta(acceptedSemanticDelta);
+    const qualityEnhancingDeltas = acceptedSemanticDelta?.acceptedMemoryDeltas?.qualityEnhancingDeltas || [];
+    const runtimeSignals = acceptedSemanticDelta?.acceptedRuntimeOnlySignals || [];
 
     context.currentZone = boundaryResult.finalZone;
     context.handoffStatus = boundaryResult.handoffStatus;
     delete context.overlayState;
 
-    const minimumProfileSignals = flowDriving.minimumProfileSignals || {};
-    const profileSignals = buildProfileSignals(previousRuntimeState?.profile, minimumProfileSignals, flowDriving, text);
+    const profileSignals = buildProfileSignals(previousRuntimeState?.profile, flowDriving, text);
     const minimumComplete = profileSignals.academicResultKnown
       && profileSignals.courseDirectionStatusKnown
       && profileSignals.universityDirectionStatusKnown;
 
     context.profileCompleteness = minimumComplete ? "minimum_complete" : "incomplete";
-    context.minimumProfileRoute = minimumProfileSignals.suggestedCounselingRoute?.value
-      || routeFromProfile(profileSignals, flowDriving, text);
+    context.minimumProfileRoute = routeFromProfile(profileSignals, flowDriving, text);
     const hasDirection = hasUsableDirection(profileSignals, flowDriving);
-    const hasFitSignals = (accepted?.qualityEnhancingSignals || []).some((signal) => signal.usefulness === "high");
+    const hasFitSignals = qualityEnhancingDeltas.some((delta) => delta.usefulness === "high");
     context.recommendationReadiness = profileSignals.academicResultKnown && hasDirection
       ? (hasFitSignals ? "R3" : "R2")
       : "R1";
-    context.studentPosture = accepted?.studentPostureSignal?.posture || postureFromContext(context.minimumProfileRoute, text);
+    context.studentPosture = runtimeSignals.find((signal) => signal.kind === "student_posture")?.posture || postureFromContext(context.minimumProfileRoute, text);
     context.counselorResponseMode = responseModeFromContext(boundaryResult, context.studentPosture, context.minimumProfileRoute, text);
     context.decisionSupportMode = decisionSupportMode(text, context.primaryCounselingAction);
     context.summaryCheckpointStatus = ["summary_checkpoint", "milestone_confirmation"].includes(context.counselorResponseMode)
@@ -47,7 +46,8 @@ export class OperatingContextManager {
       ? "required"
       : "not_applicable";
 
-    const activeDirection = activeDirectionFromInterpretation(flowDriving, accepted?.contradictionSignals, text, context.activeStudentDirection);
+    const hasAmbiguity = runtimeSignals.some((signal) => signal.kind === "ambiguity");
+    const activeDirection = hasAmbiguity ? undefined : activeDirectionFromDeltas(flowDriving, text, context.activeStudentDirection);
     if (activeDirection) context.activeStudentDirection = activeDirection;
     if (flowDriving.preferenceStrengthCandidate?.level) context.preferenceStrength = flowDriving.preferenceStrengthCandidate.level;
 
@@ -59,7 +59,7 @@ export class OperatingContextManager {
     } else if (boundaryResult.allowedNextBehavior === "clarify") {
       context.primaryCounselingAction = "A8";
       context.nextBestCounselingMove = "Clarify whether the student means counseling preference or official action.";
-    } else if (hasKnowledgeNeed(accepted) || FACTUAL_DETOUR.test(text)) {
+    } else if (hasKnowledgeNeed(runtimeSignals) || FACTUAL_DETOUR.test(text)) {
       context.overlayState = "S9";
       context.resumeTargetState = context.currentMainState === "S1" ? "S3" : context.currentMainState;
       context.primaryCounselingAction = "A5";
@@ -76,6 +76,10 @@ export class OperatingContextManager {
       context.counselorResponseMode = "decision_support";
       context.decisionSupportMode = "clarify_tradeoff";
       context.nextBestCounselingMove = "Compare or shortlist options.";
+    } else if (hasAmbiguity) {
+      context.primaryCounselingAction = "A8";
+      context.counselorResponseMode = "clarify_once";
+      context.nextBestCounselingMove = "Clarify the possible correction or direction change before changing current truth.";
     } else if (flowDriving.confirmedCounselingCoursePreference || flowDriving.confirmedCounselingUniversityPreference || flowDriving.confirmedCounselingPathwayPreference || CONFIRM_PREF.test(text)) {
       context.currentMainState = "S6";
       context.primaryCounselingAction = "A9";
@@ -109,16 +113,26 @@ export class OperatingContextManager {
   }
 }
 
-function buildProfileSignals(previous = {}, minimumProfileSignals = {}, flowDriving = {}, text = "") {
+function flowDrivingFromSemanticDelta(acceptedSemanticDelta) {
+  const deltas = acceptedSemanticDelta?.acceptedMemoryDeltas?.flowDrivingDeltas || {};
+  return {
+    academicResult: deltas.academicResults?.[0],
+    coursesConsidering: deltas.coursesConsidering || [],
+    universitiesConsidering: deltas.universitiesConsidering || [],
+    pathwaysConsidering: deltas.pathwaysConsidering || [],
+    confirmedCounselingCoursePreference: deltas.confirmedCounselingCoursePreferences?.[0],
+    confirmedCounselingUniversityPreference: deltas.confirmedCounselingUniversityPreferences?.[0],
+    confirmedCounselingPathwayPreference: deltas.confirmedCounselingPathwayPreferences?.[0]
+  };
+}
+
+function buildProfileSignals(previous = {}, flowDriving = {}, text = "") {
   const academicResultKnown = Boolean(previous.academicResultKnown
     || previous.hasAcademicResults
-    || minimumProfileSignals.academicResultKnown
-    || minimumProfileSignals.hasAcademicResults
-    || minimumProfileSignals.academicResultStatus?.value === "known"
+    || flowDriving.academicResult
     || RESULTS.test(text));
   const courseDirectionStatus = directionStatus(
     previous.courseDirectionStatus,
-    minimumProfileSignals.courseDirectionStatus?.value,
     flowDriving.confirmedCounselingCoursePreference,
     flowDriving.coursesConsidering,
     COURSE.test(text),
@@ -131,7 +145,6 @@ function buildProfileSignals(previous = {}, minimumProfileSignals = {}, flowDriv
   );
   const universityDirectionStatus = directionStatus(
     previous.universityDirectionStatus,
-    minimumProfileSignals.universityDirectionStatus?.value,
     flowDriving.confirmedCounselingUniversityPreference,
     flowDriving.universitiesConsidering,
     UNIVERSITY.test(text),
@@ -146,10 +159,8 @@ function buildProfileSignals(previous = {}, minimumProfileSignals = {}, flowDriv
     academicResultKnown,
     academicResultStatus: academicResultKnown ? "known" : "unknown",
     courseDirectionStatusKnown: Boolean(previous.courseDirectionStatusKnown
-      || minimumProfileSignals.courseDirectionStatusKnown
       || courseDirectionStatus !== undefined),
     universityDirectionStatusKnown: Boolean(previous.universityDirectionStatusKnown
-      || minimumProfileSignals.universityDirectionStatusKnown
       || universityDirectionStatus !== undefined),
     courseDirectionStatus: courseDirectionStatus || "unknown",
     universityDirectionStatus: universityDirectionStatus || "unknown",
@@ -157,12 +168,11 @@ function buildProfileSignals(previous = {}, minimumProfileSignals = {}, flowDriv
   };
 }
 
-function directionStatus(previous, proposed, confirmed, considering = [], textHasDirection, textSaysUnknown, labels) {
-  if (proposed) return proposed;
+function directionStatus(previous, confirmed, considering = [], textHasDirection, textSaysUnknown, labels) {
   if (confirmed) return labels.confirmed;
   if (considering.some((signal) => signal.status === "preferred")) return labels.preferred;
-  if (considering.length || textHasDirection) return labels.considering;
   if (textSaysUnknown) return "unknown";
+  if (considering.length || textHasDirection) return labels.considering;
   return previous;
 }
 
@@ -216,14 +226,12 @@ function decisionSupportMode(text = "", primaryAction) {
   return null;
 }
 
-function hasKnowledgeNeed(accepted) {
-  return Boolean(accepted?.knowledgeNeedSignals?.length);
+function hasKnowledgeNeed(runtimeSignals) {
+  return runtimeSignals.some((signal) => signal.kind === "knowledge_need");
 }
 
-function activeDirectionFromInterpretation(flowDriving, contradictionSignals = [], text, previous = {}) {
-  const contradiction = contradictionSignals.find((signal) => signal.recommendedBehavior === "preserve_history_and_switch_active_direction");
-  const course = contradiction?.newClaim?.courseOrProgram
-    || flowDriving.confirmedCounselingCoursePreference?.courseOrProgram
+function activeDirectionFromDeltas(flowDriving, text, previous = {}) {
+  const course = flowDriving.confirmedCounselingCoursePreference?.courseOrProgram
     || flowDriving.coursesConsidering?.find((signal) => signal.status === "preferred")?.courseOrProgram
     || flowDriving.coursesConsidering?.[0]?.courseOrProgram;
   const university = flowDriving.confirmedCounselingUniversityPreference?.university

@@ -5,8 +5,8 @@ import { OperatingContextManager } from "./operatingContextManager.js";
 import { SkillControlService } from "./skillControlService.js";
 import { KnowledgeGateway } from "./knowledgeGateway.js";
 import { AIExecutionClient } from "./aiExecutionClient.js";
-import { AIInterpretationClient } from "./aiInterpretationClient.js";
-import { InterpretationValidator } from "./interpretationValidator.js";
+import { AISemanticDeltaExtractor } from "./aiSemanticDeltaExtractor.js";
+import { SemanticDeltaValidator } from "./semanticDeltaValidator.js";
 import { ValidationPipeline } from "./validationPipeline.js";
 import { commitTurn, createConversation, loadConversation } from "./outputCommitService.js";
 import { writeAuditEvent } from "./auditEventWriter.js";
@@ -18,8 +18,8 @@ export class CounselingTurnOrchestrator {
     this.skillControlService = services.skillControlService || new SkillControlService();
     this.knowledgeGateway = services.knowledgeGateway || new KnowledgeGateway();
     this.aiExecutionClient = services.aiExecutionClient || new AIExecutionClient();
-    this.aiInterpretationClient = services.aiInterpretationClient || new AIInterpretationClient();
-    this.interpretationValidator = services.interpretationValidator || new InterpretationValidator();
+    this.aiSemanticDeltaExtractor = services.aiSemanticDeltaExtractor || new AISemanticDeltaExtractor();
+    this.semanticDeltaValidator = services.semanticDeltaValidator || new SemanticDeltaValidator();
     this.validationPipeline = services.validationPipeline || new ValidationPipeline();
   }
 
@@ -63,18 +63,23 @@ export class CounselingTurnOrchestrator {
     };
 
     const fastBoundarySignals = this.boundaryEngine.scan(turnInput);
-    const rawInterpretation = await this.aiInterpretationClient.interpret(turnInput, fastBoundarySignals);
-    const acceptedInterpretation = this.interpretationValidator.validate({ rawInterpretation, fastBoundarySignals, turnInput });
-    const boundaryResult = this.boundaryEngine.evaluate(turnInput, { fastBoundarySignals, acceptedInterpretation });
-    const { context: operatingContext, profileSignals } = this.operatingContextManager.build(previousState, turnInput, boundaryResult, acceptedInterpretation);
+    const rawSemanticDelta = await this.aiSemanticDeltaExtractor.extract(turnInput, fastBoundarySignals);
+    const acceptedSemanticDelta = this.semanticDeltaValidator.validate({
+      rawSemanticDelta,
+      fastBoundarySignals,
+      turnInput,
+      extractor: this.aiSemanticDeltaExtractor
+    });
+    const boundaryResult = this.boundaryEngine.evaluate(turnInput, { fastBoundarySignals, acceptedSemanticDelta });
+    const { context: operatingContext, profileSignals } = this.operatingContextManager.build(previousState, turnInput, boundaryResult, acceptedSemanticDelta);
     const skillSelection = await this.skillControlService.select(operatingContext, boundaryResult);
 
     // Checkpoint 1: platform-controlled context, boundary, skill, and knowledge before AI text.
-    const knowledgeAnswer = await this.knowledgeGateway.answer(studentMessage, acceptedInterpretation);
+    const knowledgeAnswer = await this.knowledgeGateway.answer(studentMessage, acceptedSemanticDelta);
     const executionContext = {
       studentMessage,
       conversationContext: turnInput.recentConversationSummary,
-      acceptedInterpretation: interpretationSummary(acceptedInterpretation),
+      acceptedSemanticDelta: semanticDeltaSummary(acceptedSemanticDelta),
       operatingContext,
       boundaryResult,
       skillSelection,
@@ -95,7 +100,7 @@ export class CounselingTurnOrchestrator {
     };
     const aiExecutionResult = await this.aiExecutionClient.execute(executionContext);
     // Checkpoint 2: AI output is only a proposal until validation and commit accept it.
-    const validationResult = this.validationPipeline.validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedInterpretation });
+    const validationResult = this.validationPipeline.validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedSemanticDelta });
     const commitResult = await commitTurn({
       conversationId,
       studentMessage,
@@ -114,19 +119,19 @@ export class CounselingTurnOrchestrator {
       aiExecutionResult,
       validationResult,
       commitResult,
-      interpretationAudit: {
-        rawInterpretation,
-        acceptedInterpretation,
-        rejectedSignals: acceptedInterpretation.rejectedSignals,
-        downgradedSignals: acceptedInterpretation.downgradedSignals,
-        interpretationValidationEvents: acceptedInterpretation.validationEvents,
-        acceptedStudentPostureSignal: acceptedInterpretation.accepted.studentPostureSignal,
+      semanticDeltaAudit: {
+        rawSemanticDelta,
+        acceptedSemanticDelta,
+        rejectedCandidates: acceptedSemanticDelta.rejectedCandidates,
+        downgradedCandidates: acceptedSemanticDelta.downgradedCandidates,
+        semanticDeltaValidationEvents: acceptedSemanticDelta.validationEvents,
+        acceptedStudentPostureSignal: acceptedSemanticDelta.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "student_posture"),
         fastBoundarySignals,
         boundaryResolutionInput: {
           fastBoundarySignals,
-          acceptedBoundaryCandidateSignals: acceptedInterpretation.accepted.boundaryCandidateSignals,
-          readinessToRegisterSignal: acceptedInterpretation.accepted.flowDriving.readinessToRegisterSignal,
-          ambiguousProceedSignal: acceptedInterpretation.accepted.boundaryCandidateSignals.find((signal) => signal.type === "ambiguous_proceed_language")
+          acceptedBoundaryRuntimeSignals: acceptedSemanticDelta.acceptedRuntimeOnlySignals.filter((signal) => signal.kind === "boundary"),
+          readinessToRegisterSignal: acceptedSemanticDelta.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "boundary" && signal.type === "ready_to_apply_or_register"),
+          ambiguousProceedSignal: acceptedSemanticDelta.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "boundary" && signal.type === "ambiguous_proceed_language")
         }
       }
     });
@@ -135,8 +140,8 @@ export class CounselingTurnOrchestrator {
     return {
       finalResponse: validationResult.finalResponse,
       runtimeState,
-      rawInterpretation,
-      acceptedInterpretation,
+      rawSemanticDelta,
+      acceptedSemanticDelta,
       fastBoundarySignals,
       boundaryResult,
       operatingContext: commitResult.committedContext,
@@ -154,14 +159,10 @@ function behaviorForBoundary(boundaryResult) {
   return "continue_normal_counseling";
 }
 
-function interpretationSummary(acceptedInterpretation) {
+function semanticDeltaSummary(acceptedSemanticDelta) {
   return {
-    status: acceptedInterpretation.status,
-    flowDriving: acceptedInterpretation.accepted.flowDriving,
-    qualityEnhancingSignals: acceptedInterpretation.accepted.qualityEnhancingSignals,
-    studentPostureSignal: acceptedInterpretation.accepted.studentPostureSignal,
-    boundaryCandidateSignals: acceptedInterpretation.accepted.boundaryCandidateSignals,
-    knowledgeNeedSignals: acceptedInterpretation.accepted.knowledgeNeedSignals,
-    contradictionSignals: acceptedInterpretation.accepted.contradictionSignals
+    status: acceptedSemanticDelta.status,
+    acceptedMemoryDeltas: acceptedSemanticDelta.acceptedMemoryDeltas,
+    acceptedRuntimeOnlySignals: acceptedSemanticDelta.acceptedRuntimeOnlySignals
   };
 }

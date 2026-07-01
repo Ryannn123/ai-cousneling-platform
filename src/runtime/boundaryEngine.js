@@ -11,10 +11,10 @@ export class BoundaryEngine {
     return this.scanner.scan(turnInput.studentMessage || "");
   }
 
-  evaluate(turnInput, { fastBoundarySignals, acceptedInterpretation } = {}) {
+  evaluate(turnInput, { fastBoundarySignals, acceptedSemanticDelta } = {}) {
     return this.resolver.resolve({
       fastBoundarySignals: fastBoundarySignals || this.scan(turnInput),
-      acceptedInterpretation
+      acceptedSemanticDelta
     });
   }
 }

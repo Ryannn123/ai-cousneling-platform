@@ -9,9 +9,21 @@ import { KnowledgeGateway } from "../src/runtime/knowledgeGateway.js";
 import { ValidationPipeline } from "../src/runtime/validationPipeline.js";
 import { CounselingTurnOrchestrator } from "../src/runtime/counselingTurnOrchestrator.js";
 import { AIExecutionClient } from "../src/runtime/aiExecutionClient.js";
-import { AIInterpretationClient } from "../src/runtime/aiInterpretationClient.js";
-import { parseLlmInterpretation } from "../src/runtime/interpretationLayer.js";
-import { InterpretationValidator } from "../src/runtime/interpretationValidator.js";
+import { AISemanticDeltaExtractor } from "../src/runtime/aiSemanticDeltaExtractor.js";
+import { parseLlmSemanticDelta } from "../src/runtime/semanticDeltaLayer.js";
+import { SemanticDeltaValidator } from "../src/runtime/semanticDeltaValidator.js";
+
+function flowDrivingDeltas(result) {
+  return result.acceptedSemanticDelta.acceptedMemoryDeltas.flowDrivingDeltas;
+}
+
+function qualityEnhancingDeltas(result) {
+  return result.acceptedSemanticDelta.acceptedMemoryDeltas.qualityEnhancingDeltas;
+}
+
+function runtimeSignals(result, kind) {
+  return result.acceptedSemanticDelta.acceptedRuntimeOnlySignals.filter((signal) => signal.kind === kind);
+}
 
 test("boundary detection catches apply/register/payment/official action language", () => {
   const engine = new BoundaryEngine();
@@ -71,8 +83,8 @@ test("weak interest is not over-promoted to confirmed preference", async () => {
     studentMessage: "Psychology sounds interesting."
   });
   assert.notEqual(result.operatingContext.preferenceStrength, "L4");
-  assert.equal(result.acceptedInterpretation.accepted.flowDriving.preferenceStrengthCandidate.level, "L1");
-  assert.equal(result.acceptedInterpretation.accepted.flowDriving.confirmedCounselingCoursePreference, undefined);
+  assert.equal(flowDrivingDeltas(result).coursesConsidering[0].status, "considering");
+  assert.equal(flowDrivingDeltas(result).confirmedCounselingCoursePreferences.length, 0);
   assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "confirmed_counseling_preference"), false);
 });
 
@@ -84,7 +96,7 @@ test("phase 4 extracts course university and pathway considering fields", async 
     studentMessage: "I am considering Psychology at University A through foundation."
   });
 
-  const flowDriving = result.acceptedInterpretation.accepted.flowDriving;
+  const flowDriving = flowDrivingDeltas(result);
   assert.equal(flowDriving.coursesConsidering[0].courseOrProgram, "Psychology");
   assert.equal(flowDriving.universitiesConsidering[0].university, "University A");
   assert.equal(flowDriving.pathwaysConsidering[0].pathway, "Foundation");
@@ -143,14 +155,14 @@ test("budget ranking and location are quality signals not minimum profile gates"
     studentMessage: "I prefer a budget university around KL with good ranking."
   });
 
-  const accepted = result.acceptedInterpretation.accepted;
-  assert.equal(accepted.flowDriving.minimumProfileSignals.academicResultKnown, false);
+  const qualityDeltas = qualityEnhancingDeltas(result);
+  assert.equal(flowDrivingDeltas(result).academicResults.length, 0);
   assert.equal(result.operatingContext.profileCompleteness, "incomplete");
-  assert.deepEqual(accepted.qualityEnhancingSignals.map((signal) => signal.type), ["budget_sensitivity", "university_fit_preference", "location_preference"]);
+  assert.deepEqual(qualityDeltas.map((delta) => delta.type), ["budget_sensitivity", "university_fit_preference", "location_preference"]);
 });
 
-test("student posture signals are accepted for common v1.2 counseling postures", async () => {
-  const client = new AIInterpretationClient({ provider: "openai" });
+test("student posture signals are accepted as runtime-only signals", async () => {
+  const extractor = new AISemanticDeltaExtractor({ provider: "openai" });
   const cases = [
     ["I'm just browsing.", "just_browsing"],
     ["I already want Psychology, but I don't know which university.", "course_first"],
@@ -159,9 +171,9 @@ test("student posture signals are accepted for common v1.2 counseling postures",
   ];
 
   for (const [studentMessage, posture] of cases) {
-    const raw = await client.interpret({ conversationId: "c", turnId: "t", messageId: "m", studentMessage }, []);
-    const accepted = new InterpretationValidator().validate({ rawInterpretation: raw, turnInput: { conversationId: "c", turnId: "t", messageId: "m", studentMessage } });
-    assert.equal(accepted.accepted.studentPostureSignal.posture, posture);
+    const raw = await extractor.extract({ conversationId: "c", turnId: "t", messageId: "m", studentMessage }, []);
+    const accepted = new SemanticDeltaValidator().validate({ rawSemanticDelta: raw, turnInput: { conversationId: "c", turnId: "t", messageId: "m", studentMessage } });
+    assert.equal(accepted.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "student_posture").posture, posture);
   }
 });
 
@@ -210,23 +222,23 @@ test("phase 4 rejects irrelevant quality noise", async () => {
     studentMessage: "I like coffee."
   });
 
-  assert.equal(result.acceptedInterpretation.accepted.qualityEnhancingSignals.length, 0);
-  assert.ok(result.acceptedInterpretation.rejectedSignals.some((signal) => signal.reason === "quality_signal_low_usefulness"));
+  assert.equal(qualityEnhancingDeltas(result).length, 0);
+  assert.ok(result.acceptedSemanticDelta.rejectedCandidates.some((candidate) => candidate.reason === "quality_signal_low_usefulness"));
 });
 
 test("phase 4 knowledge needs are accepted for fees entry requirements and ranking", async () => {
-  const client = new AIInterpretationClient({ provider: "openai" });
-  const result = await client.interpret({
+  const extractor = new AISemanticDeltaExtractor({ provider: "openai" });
+  const result = await extractor.extract({
     conversationId: "test",
     turnId: "turn",
     messageId: "message",
     studentMessage: "What are the fees, entry requirements, and ranking for Psychology?"
   }, []);
 
-  assert.deepEqual(result.knowledgeNeedSignals.map((signal) => signal.type), ["fees", "entry_requirements", "ranking"]);
+  assert.deepEqual(result.runtimeOnlySignalCandidates.filter((signal) => signal.kind === "knowledge_need").map((signal) => signal.type), ["fees", "entry_requirements", "ranking"]);
 });
 
-test("openai interpretation client passes InterpretationResult schema", async () => {
+test("openai semantic delta extractor passes SemanticDeltaResult schema", async () => {
   const originalFetch = globalThis.fetch;
   let capturedRequest;
   globalThis.fetch = async (url, options) => {
@@ -234,14 +246,14 @@ test("openai interpretation client passes InterpretationResult schema", async ()
     return {
       ok: true,
       async json() {
-        return { output_text: JSON.stringify(interpretationFixture()) };
+        return { output_text: JSON.stringify(semanticDeltaFixture()) };
       }
     };
   };
 
   try {
-    const client = new AIInterpretationClient({ provider: "openai", openaiApiKey: "test-key", model: "gpt-test" });
-    const result = await client.interpret({
+    const extractor = new AISemanticDeltaExtractor({ provider: "openai", openaiApiKey: "test-key", model: "gpt-test" });
+    const result = await extractor.extract({
       conversationId: "conversation",
       turnId: "turn",
       messageId: "message",
@@ -250,16 +262,17 @@ test("openai interpretation client passes InterpretationResult schema", async ()
 
     assert.match(capturedRequest.url, /api\.openai\.com\/v1\/responses/);
     assert.equal(capturedRequest.body.text.format.type, "json_schema");
-    assert.equal(capturedRequest.body.text.format.name, "InterpretationResult");
-    assert.ok(capturedRequest.body.text.format.schema.required.includes("flowDriving"));
-    assert.ok(capturedRequest.body.text.format.schema.properties.flowDriving.properties.coursesConsidering);
-    assert.equal(result.flowDriving.coursesConsidering[0].courseOrProgram, "Psychology");
+    assert.equal(capturedRequest.body.text.format.name, "SemanticDeltaResult");
+    assert.ok(capturedRequest.body.text.format.schema.required.includes("memoryDeltaCandidates"));
+    assert.equal(capturedRequest.body.text.format.schema.properties.conversationId, undefined);
+    assert.equal(capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas.properties.minimumProfileSignals, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].courseOrProgram, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("gemini interpretation client passes concise JSON schema without platform metadata", async () => {
+test("gemini semantic delta extractor passes concise JSON schema without platform metadata", async () => {
   const originalFetch = globalThis.fetch;
   let capturedRequest;
   globalThis.fetch = async (url, options) => {
@@ -270,7 +283,7 @@ test("gemini interpretation client passes concise JSON schema without platform m
         return {
           steps: [{
             type: "model_output",
-            content: [{ type: "text", text: JSON.stringify(interpretationFixture()) }]
+            content: [{ type: "text", text: JSON.stringify(semanticDeltaFixture()) }]
           }]
         };
       }
@@ -278,8 +291,8 @@ test("gemini interpretation client passes concise JSON schema without platform m
   };
 
   try {
-    const client = new AIInterpretationClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
-    const result = await client.interpret({
+    const extractor = new AISemanticDeltaExtractor({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
+    const result = await extractor.extract({
       conversationId: "conversation",
       turnId: "turn",
       messageId: "message",
@@ -291,18 +304,19 @@ test("gemini interpretation client passes concise JSON schema without platform m
     assert.equal(capturedRequest.body.store, false);
     assert.equal(capturedRequest.body.response_format.mime_type, "application/json");
     assert.equal(capturedRequest.body.response_format.schema.type, "object");
-    assert.ok(capturedRequest.body.response_format.schema.required.includes("flowDriving"));
+    assert.ok(capturedRequest.body.response_format.schema.required.includes("memoryDeltaCandidates"));
     assert.equal(capturedRequest.body.response_format.schema.required.includes("conversationId"), false);
     assert.equal(capturedRequest.body.response_format.schema.properties.conversationId, undefined);
-    assert.equal(capturedRequest.body.response_format.schema.properties.flowDriving.properties.coursesConsidering.items.properties.source, undefined);
-    assert.equal(capturedRequest.body.response_format.schema.properties.flowDriving.properties.minimumProfileSignals.properties.courseDirectionStatus.type, "string");
-    assert.equal(result.flowDriving.coursesConsidering[0].courseOrProgram, "Psychology");
+    const flowSchema = capturedRequest.body.response_format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas;
+    assert.equal(flowSchema.properties.coursesConsidering.items.properties.source, undefined);
+    assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].courseOrProgram, "Psychology");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("gemini concise interpretation response is hydrated before validation", async () => {
+test("gemini concise semantic delta response is hydrated before validation", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     ok: true,
@@ -310,32 +324,31 @@ test("gemini concise interpretation response is hydrated before validation", asy
       return {
         steps: [{
           type: "model_output",
-          content: [{ type: "text", text: JSON.stringify(conciseInterpretationFixture()) }]
+          content: [{ type: "text", text: JSON.stringify(conciseSemanticDeltaFixture()) }]
         }]
       };
     }
   });
 
   try {
-    const client = new AIInterpretationClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
-    const result = await client.interpret({
+    const extractor = new AISemanticDeltaExtractor({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
+    const result = await extractor.extract({
       conversationId: "conversation",
       turnId: "turn",
       messageId: "message",
       studentMessage: "Psychology sounds interesting."
     }, []);
 
-    assert.equal(result.conversationId, "conversation");
-    assert.equal(result.flowDriving.coursesConsidering[0].source, "current_message");
-    assert.equal(result.flowDriving.coursesConsidering[0].promotionRisk, "none");
-    assert.equal(result.flowDriving.minimumProfileSignals.courseDirectionStatus.value, "considering_some_courses");
-    assert.equal(result.qualityEnhancingSignals[0].evidence[0].quote, "people focused");
+    assert.equal(result.conversationId, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].source, "current_message");
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].promotionRisk, "none");
+    assert.equal(result.memoryDeltaCandidates.qualityEnhancingDeltas[0].evidence[0].quote, "people focused");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("gemini interpretation client surfaces live Gemini 400", async () => {
+test("gemini semantic delta extractor surfaces live Gemini 400", async () => {
   const originalFetch = globalThis.fetch;
   const capturedRequests = [];
   globalThis.fetch = async (url, options) => {
@@ -350,8 +363,8 @@ test("gemini interpretation client surfaces live Gemini 400", async () => {
   };
 
   try {
-    const client = new AIInterpretationClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
-    await assert.rejects(client.interpret({
+    const extractor = new AISemanticDeltaExtractor({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
+    await assert.rejects(extractor.extract({
       conversationId: "conversation",
       turnId: "turn",
       messageId: "message",
@@ -366,22 +379,22 @@ test("gemini interpretation client surfaces live Gemini 400", async () => {
   }
 });
 
-test("raw interpretation layer returns parsed OpenAI output without hydration or fast boundary input", async () => {
+test("raw semantic delta layer returns parsed OpenAI output without hydration or fast boundary input", async () => {
   const originalFetch = globalThis.fetch;
-  const rawInterpretation = rawInterpretationFixture();
+  const rawSemanticDelta = rawSemanticDeltaFixture();
   let capturedRequest;
   globalThis.fetch = async (url, options) => {
     capturedRequest = { url: String(url), body: JSON.parse(options.body) };
     return {
       ok: true,
       async json() {
-        return { output_text: JSON.stringify(rawInterpretation) };
+        return { output_text: JSON.stringify(rawSemanticDelta) };
       }
     };
   };
 
   try {
-    const result = await parseLlmInterpretation({
+    const result = await parseLlmSemanticDelta({
       studentMessage: "Psychology sounds interesting.",
       recentConversationSummary: "student: hello"
     }, { provider: "openai", openaiApiKey: "test-key", model: "gpt-test" });
@@ -391,18 +404,18 @@ test("raw interpretation layer returns parsed OpenAI output without hydration or
       studentMessage: "Psychology sounds interesting.",
       recentConversationSummary: "student: hello"
     });
-    assert.deepEqual(result, rawInterpretation);
+    assert.deepEqual(result, rawSemanticDelta);
     assert.equal(result.conversationId, undefined);
-    assert.equal(result.flowDriving.coursesConsidering[0].source, undefined);
-    assert.equal(result.flowDriving.coursesConsidering[0].promotionRisk, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].source, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].promotionRisk, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("raw interpretation layer returns parsed Gemini output without hydration or fast boundary input", async () => {
+test("raw semantic delta layer returns parsed Gemini output without hydration or fast boundary input", async () => {
   const originalFetch = globalThis.fetch;
-  const rawInterpretation = rawInterpretationFixture();
+  const rawSemanticDelta = rawSemanticDeltaFixture();
   let capturedRequest;
   globalThis.fetch = async (url, options) => {
     capturedRequest = { url: String(url), body: JSON.parse(options.body) };
@@ -412,7 +425,7 @@ test("raw interpretation layer returns parsed Gemini output without hydration or
         return {
           steps: [{
             type: "model_output",
-            content: [{ type: "text", text: JSON.stringify(rawInterpretation) }]
+            content: [{ type: "text", text: JSON.stringify(rawSemanticDelta) }]
           }]
         };
       }
@@ -420,7 +433,7 @@ test("raw interpretation layer returns parsed Gemini output without hydration or
   };
 
   try {
-    const result = await parseLlmInterpretation({
+    const result = await parseLlmSemanticDelta({
       studentMessage: "Psychology sounds interesting.",
       recentConversationSummary: "student: hello"
     }, { provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
@@ -430,22 +443,22 @@ test("raw interpretation layer returns parsed Gemini output without hydration or
       studentMessage: "Psychology sounds interesting.",
       recentConversationSummary: "student: hello"
     });
-    assert.deepEqual(result, rawInterpretation);
+    assert.deepEqual(result, rawSemanticDelta);
     assert.equal(result.conversationId, undefined);
-    assert.equal(result.flowDriving.coursesConsidering[0].source, undefined);
-    assert.equal(result.flowDriving.coursesConsidering[0].promotionRisk, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].source, undefined);
+    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].promotionRisk, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("raw interpretation layer requires a provider API key", async () => {
-  await assert.rejects(parseLlmInterpretation({
+test("raw semantic delta layer requires a provider API key", async () => {
+  await assert.rejects(parseLlmSemanticDelta({
     studentMessage: "Psychology sounds interesting."
   }, { provider: "openai", openaiApiKey: "" }), /API key is required/);
 });
 
-test("phase 4 direction change creates contradiction and switches active direction", async () => {
+test("phase 4 direction change creates runtime-only ambiguity without rewriting active direction", async () => {
   const app = new CounselingTurnOrchestrator();
   const conversation = await app.createConversation();
   await app.handleTurn({
@@ -458,46 +471,46 @@ test("phase 4 direction change creates contradiction and switches active directi
     studentMessage: "Actually, I don't want Psychology anymore. I want IT."
   });
 
-  assert.equal(result.acceptedInterpretation.accepted.contradictionSignals[0].type, "direction_change");
-  assert.equal(result.operatingContext.activeStudentDirection.courseOrProgram, "IT");
+  assert.equal(runtimeSignals(result, "ambiguity")[0].type, "direction_change");
+  assert.equal(result.operatingContext.activeStudentDirection.courseOrProgram, "Psychology");
+  assert.equal(result.operatingContext.counselorResponseMode, "clarify_once");
 });
 
-test("phase 4 audit records accepted rejected and downgraded interpretation", async () => {
+test("phase 4 audit records accepted rejected and downgraded semantic deltas", async () => {
   const app = new CounselingTurnOrchestrator({
-    aiInterpretationClient: {
-      async interpret(turnInput) {
+    aiSemanticDeltaExtractor: {
+      provider: "mock",
+      model: "test",
+      async extract() {
         return {
-          conversationId: turnInput.conversationId,
-          turnId: turnInput.turnId,
-          messageId: turnInput.messageId,
-          flowDriving: {
-            coursesConsidering: [],
-            universitiesConsidering: [],
-            pathwaysConsidering: [],
-            confirmedCounselingCoursePreference: {
-              courseOrProgram: "Psychology",
-              status: "confirmed_counseling_preference",
-              confidence: "high",
-              evidence: [{ quote: "I prefer Psychology" }],
-              source: "current_message",
-              promotionRisk: "none"
+          memoryDeltaCandidates: {
+            flowDrivingDeltas: {
+              academicResults: [],
+              coursesConsidering: [],
+              confirmedCounselingCoursePreferences: [{
+                operation: "add_new",
+                courseOrProgram: "Psychology",
+                status: "confirmed_counseling_preference",
+                confidence: "high",
+                evidence: [{ quote: "I prefer Psychology" }]
+              }],
+              universitiesConsidering: [],
+              confirmedCounselingUniversityPreferences: [],
+              pathwaysConsidering: [],
+              confirmedCounselingPathwayPreferences: []
             },
-            minimumProfileSignals: {}
+            qualityEnhancingDeltas: [{
+              operation: "add_new",
+              kind: "quality_enhancing",
+              type: "other",
+              value: { trivia: "coffee" },
+              usefulness: "low",
+              sensitivity: "none",
+              confidence: "high",
+              evidence: [{ quote: "coffee" }]
+            }]
           },
-          qualityEnhancingSignals: [{
-            type: "other",
-            value: { trivia: "coffee" },
-            usefulness: "low",
-            sensitivity: "none",
-            confidence: "high",
-            evidence: [{ quote: "coffee" }],
-            source: "current_message",
-            promotionRisk: "none"
-          }],
-          boundaryCandidateSignals: [],
-          knowledgeNeedSignals: [],
-          contradictionSignals: [],
-          confidenceSummary: { overallConfidence: "medium", requiresClarification: false }
+          runtimeOnlySignalCandidates: []
         };
       }
     }
@@ -508,37 +521,37 @@ test("phase 4 audit records accepted rejected and downgraded interpretation", as
     studentMessage: "I prefer Psychology"
   });
 
-  assert.ok(result.auditEvent.interpretationAudit.acceptedInterpretation);
-  assert.ok(result.auditEvent.interpretationAudit.rejectedSignals.some((signal) => signal.reason === "quality_signal_low_usefulness"));
-  assert.ok(result.auditEvent.interpretationAudit.downgradedSignals.some((signal) => signal.reason === "courseOrProgram_confirmation_not_explicit"));
+  assert.ok(result.auditEvent.semanticDeltaAudit.acceptedSemanticDelta);
+  assert.ok(result.auditEvent.semanticDeltaAudit.rejectedCandidates.some((candidate) => candidate.reason === "quality_signal_low_usefulness"));
+  assert.ok(result.auditEvent.semanticDeltaAudit.downgradedCandidates.some((candidate) => candidate.reason === "courseOrProgram_confirmation_not_explicit"));
 });
 
-test("phase 4 invalid interpretation evidence falls back safely", async () => {
+test("phase 4 invalid semantic delta evidence falls back safely", async () => {
   const app = new CounselingTurnOrchestrator({
-    aiInterpretationClient: {
-      async interpret(turnInput) {
+    aiSemanticDeltaExtractor: {
+      provider: "mock",
+      model: "test",
+      async extract() {
         return {
-          conversationId: turnInput.conversationId,
-          turnId: turnInput.turnId,
-          messageId: turnInput.messageId,
-          flowDriving: {
-            coursesConsidering: [{
-              courseOrProgram: "Psychology",
-              status: "considering",
-              confidence: "high",
-              evidence: [],
-              source: "current_message",
-              promotionRisk: "none"
-            }],
-            universitiesConsidering: [],
-            pathwaysConsidering: [],
-            minimumProfileSignals: {}
+          memoryDeltaCandidates: {
+            flowDrivingDeltas: {
+              academicResults: [],
+              coursesConsidering: [{
+                operation: "add_new",
+                courseOrProgram: "Psychology",
+                status: "considering",
+                confidence: "high",
+                evidence: []
+              }],
+              confirmedCounselingCoursePreferences: [],
+              universitiesConsidering: [],
+              confirmedCounselingUniversityPreferences: [],
+              pathwaysConsidering: [],
+              confirmedCounselingPathwayPreferences: []
+            },
+            qualityEnhancingDeltas: []
           },
-          qualityEnhancingSignals: [],
-          boundaryCandidateSignals: [],
-          knowledgeNeedSignals: [],
-          contradictionSignals: [],
-          confidenceSummary: { overallConfidence: "medium", requiresClarification: false }
+          runtimeOnlySignalCandidates: []
         };
       }
     }
@@ -549,8 +562,8 @@ test("phase 4 invalid interpretation evidence falls back safely", async () => {
     studentMessage: "Psychology"
   });
 
-  assert.equal(result.acceptedInterpretation.status, "safe_fallback");
-  assert.ok(result.acceptedInterpretation.rejectedSignals.some((signal) => signal.reason === "missing_evidence"));
+  assert.equal(result.acceptedSemanticDelta.status, "safe_fallback");
+  assert.ok(result.acceptedSemanticDelta.rejectedCandidates.some((candidate) => candidate.reason === "missing_evidence"));
 });
 
 test("draft skills are rejected and approved skills are loaded with hashes", async () => {
@@ -620,7 +633,7 @@ test("phase 12 scenario reaches recommendation, comparison, preference, handoff,
     studentMessage: "I want to apply now."
   });
   assert.equal(handoff.boundaryResult.finalZone, "red");
-  assert.equal(handoff.acceptedInterpretation.accepted.flowDriving.readinessToRegisterSignal.intent, "apply_now");
+  assert.equal(runtimeSignals(handoff, "boundary").find((signal) => signal.type === "ready_to_apply_or_register").triggerType, "H1");
   assert.equal(handoff.validationResult.status, "handoff_override");
   assert.equal(handoff.commitResult.handoffPrepared, true);
   assert.equal(handoff.runtimeState.handoff.required, true);
@@ -856,101 +869,63 @@ owner: counseling_team
 `, "utf8");
 }
 
-function interpretationFixture() {
+function semanticDeltaFixture() {
   return {
-    conversationId: "conversation",
-    turnId: "turn",
-    messageId: "message",
-    flowDriving: {
-      coursesConsidering: [{
-        courseOrProgram: "Psychology",
-        status: "considering",
-        confidence: "high",
-        evidence: [{ quote: "Psychology sounds interesting" }],
-        source: "current_message",
-        promotionRisk: "none"
-      }],
-      universitiesConsidering: [],
-      pathwaysConsidering: [],
-      minimumProfileSignals: {
-        academicResultKnown: false,
-        courseDirectionStatusKnown: true,
-        universityDirectionStatusKnown: false
-      }
+    memoryDeltaCandidates: {
+      flowDrivingDeltas: {
+        academicResults: [],
+        coursesConsidering: [{
+          operation: "add_new",
+          courseOrProgram: "Psychology",
+          status: "considering",
+          confidence: "high",
+          evidence: [{ quote: "Psychology sounds interesting" }]
+        }],
+        confirmedCounselingCoursePreferences: [],
+        universitiesConsidering: [],
+        confirmedCounselingUniversityPreferences: [],
+        pathwaysConsidering: [],
+        confirmedCounselingPathwayPreferences: []
+      },
+      qualityEnhancingDeltas: []
     },
-    qualityEnhancingSignals: [],
-    boundaryCandidateSignals: [],
-    knowledgeNeedSignals: [],
-    contradictionSignals: [],
-    confidenceSummary: {
-      overallConfidence: "medium",
-      requiresClarification: false
-    }
+    runtimeOnlySignalCandidates: []
   };
 }
 
-function conciseInterpretationFixture() {
+function conciseSemanticDeltaFixture() {
   return {
-    flowDriving: {
-      coursesConsidering: [{
-        courseOrProgram: "Psychology",
-        status: "considering",
-        confidence: "high",
-        evidence: [{ quote: "Psychology sounds interesting" }]
-      }],
-      universitiesConsidering: [],
-      pathwaysConsidering: [],
-      minimumProfileSignals: {
-        academicResultKnown: false,
-        courseDirectionStatusKnown: true,
-        universityDirectionStatusKnown: false,
-        courseDirectionStatus: "considering_some_courses",
-        suggestedCounselingRoute: "collect_academic_result"
-      }
+    memoryDeltaCandidates: {
+      flowDrivingDeltas: {
+        academicResults: [],
+        coursesConsidering: [{
+          operation: "add_new",
+          courseOrProgram: "Psychology",
+          status: "considering",
+          confidence: "high",
+          evidence: [{ quote: "Psychology sounds interesting" }]
+        }],
+        confirmedCounselingCoursePreferences: [],
+        universitiesConsidering: [],
+        confirmedCounselingUniversityPreferences: [],
+        pathwaysConsidering: [],
+        confirmedCounselingPathwayPreferences: []
+      },
+      qualityEnhancingDeltas: [{
+        operation: "add_new",
+        kind: "quality_enhancing",
+        type: "career_interest",
+        value: { interest: "people focused" },
+        usefulness: "high",
+        sensitivity: "none",
+        confidence: "medium",
+        evidence: [{ quote: "people focused" }]
+      }]
     },
-    qualityEnhancingSignals: [{
-      type: "career_interest",
-      value: { interest: "people focused" },
-      usefulness: "high",
-      sensitivity: "none",
-      confidence: "medium",
-      evidence: [{ quote: "people focused" }]
-    }],
-    boundaryCandidateSignals: [],
-    knowledgeNeedSignals: [],
-    contradictionSignals: [],
-    confidenceSummary: {
-      overallConfidence: "medium",
-      requiresClarification: false
-    }
+    runtimeOnlySignalCandidates: []
   };
 }
 
-function rawInterpretationFixture() {
-  return {
-    flowDriving: {
-      coursesConsidering: [{
-        courseOrProgram: "Psychology",
-        status: "considering",
-        confidence: "high",
-        evidence: [{ quote: "Psychology sounds interesting" }]
-      }],
-      universitiesConsidering: [],
-      pathwaysConsidering: [],
-      minimumProfileSignals: {
-        academicResultKnown: false,
-        courseDirectionStatusKnown: true,
-        universityDirectionStatusKnown: false,
-        courseDirectionStatus: "considering_some_courses"
-      }
-    },
-    qualityEnhancingSignals: [],
-    boundaryCandidateSignals: [],
-    knowledgeNeedSignals: [],
-    contradictionSignals: [],
-    confidenceSummary: {
-      overallConfidence: "medium",
-      requiresClarification: false
-    }
-  };
+function rawSemanticDeltaFixture() {
+  return semanticDeltaFixture();
 }

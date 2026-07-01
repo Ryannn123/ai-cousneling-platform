@@ -5,7 +5,7 @@ const OLD_MINIMUM_PROFILE_LANGUAGE = /\b(prestige\/ranking|ranking.*budget|budge
 const NON_OFFICIAL_LANGUAGE = /\bnot (an|official)|does not submit|does not register|not application|not.*registration|not.*payment|not.*seat|not.*crm/i;
 
 export class ValidationPipeline {
-  validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedInterpretation }) {
+  validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedSemanticDelta }) {
     const validationEvents = [];
     const blockedOutputs = [];
     const acceptedMemoryOutputs = [];
@@ -75,8 +75,8 @@ export class ValidationPipeline {
         blockedOutputs.push({ output, reason: "ambiguous_proceed_must_clarify_before_preference_promotion" });
         continue;
       }
-      if (output.type === "confirmed_counseling_preference" && !supportsConfirmedPreference(acceptedInterpretation)) {
-        blockedOutputs.push({ output, reason: "confirmed_preference_not_supported_by_accepted_interpretation" });
+      if (output.type === "confirmed_counseling_preference" && !supportsConfirmedPreference(acceptedSemanticDelta)) {
+        blockedOutputs.push({ output, reason: "confirmed_preference_not_supported_by_accepted_semantic_delta" });
         continue;
       }
       acceptedMemoryOutputs.push(output);
@@ -127,9 +127,9 @@ function questionCount(text = "") {
   return (text.match(/\?/g) || []).length;
 }
 
-function supportsConfirmedPreference(acceptedInterpretation) {
-  const flowDriving = acceptedInterpretation?.accepted?.flowDriving;
-  return Boolean(flowDriving?.confirmedCounselingCoursePreference
-    || flowDriving?.confirmedCounselingUniversityPreference
-    || flowDriving?.confirmedCounselingPathwayPreference);
+function supportsConfirmedPreference(acceptedSemanticDelta) {
+  const flowDriving = acceptedSemanticDelta?.acceptedMemoryDeltas?.flowDrivingDeltas;
+  return Boolean(flowDriving?.confirmedCounselingCoursePreferences?.length
+    || flowDriving?.confirmedCounselingUniversityPreferences?.length
+    || flowDriving?.confirmedCounselingPathwayPreferences?.length);
 }

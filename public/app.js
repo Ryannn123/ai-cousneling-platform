@@ -19,7 +19,7 @@ const els = {
   handoffValue: document.querySelector("#handoffValue"),
   skillsOutput: document.querySelector("#skillsOutput"),
   acceptedOutput: document.querySelector("#acceptedOutput"),
-  acceptedInterpretationOutput: document.querySelector("#acceptedInterpretationOutput"),
+  acceptedSemanticDeltaOutput: document.querySelector("#acceptedSemanticDeltaOutput"),
   blockedOutput: document.querySelector("#blockedOutput"),
   handoffOutput: document.querySelector("#handoffOutput")
 };
@@ -97,7 +97,7 @@ function renderDebug(result) {
     rejectedCandidates: result.skillSelection.rejectedCandidates
   }, null, 2);
   els.acceptedOutput.textContent = JSON.stringify(result.validationResult.acceptedOutputs, null, 2);
-  els.acceptedInterpretationOutput.textContent = JSON.stringify(result.acceptedInterpretation, null, 2);
+  els.acceptedSemanticDeltaOutput.textContent = JSON.stringify(result.acceptedSemanticDelta, null, 2);
   els.blockedOutput.textContent = JSON.stringify(result.validationResult.blockedOutputs, null, 2);
   els.handoffOutput.textContent = JSON.stringify(result.runtimeState.handoff, null, 2);
 }

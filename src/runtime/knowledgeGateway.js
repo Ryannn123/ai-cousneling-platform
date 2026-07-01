@@ -12,8 +12,9 @@ export class KnowledgeGateway {
     return /\b(fee|fees|cost|tuition|location|campus|ranking|rank|duration|pathway|intake)\b/i.test(studentMessage || "");
   }
 
-  async answer(studentMessage, acceptedInterpretation) {
-    const knowledgeNeedSignals = acceptedInterpretation?.accepted?.knowledgeNeedSignals || [];
+  async answer(studentMessage, acceptedSemanticDelta) {
+    const knowledgeNeedSignals = (acceptedSemanticDelta?.acceptedRuntimeOnlySignals || [])
+      .filter((signal) => signal.kind === "knowledge_need");
     if (!knowledgeNeedSignals.length && !this.needsKnowledge(studentMessage)) return undefined;
     const catalog = await readJson(this.catalogPath, { programs: [] });
     const text = `${studentMessage || ""} ${knowledgeNeedSignals.map((signal) => signal.query).join(" ")}`.toLowerCase();

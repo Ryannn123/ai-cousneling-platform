@@ -36,7 +36,7 @@ Memory quality depends on interpretation quality.
 Roadmap v7 now locks Phase 4 and updates later phases to consume the Phase 4 artifact:
 
 ```text
-AcceptedInterpretation
+AcceptedSemanticDelta
 ```
 
 The new dependency chain is:
@@ -48,7 +48,7 @@ Fast boundary signal scan
   ↓
 Interpretation & Extraction Layer
   ↓
-AcceptedInterpretation
+AcceptedSemanticDelta
   ↓
 Boundary resolution + operating context update
   ↓
@@ -78,7 +78,7 @@ Phase 5+ must not consume raw transcript or uncontrolled summaries as their
 primary source of truth.
 
 They should consume validated semantic artifacts from Phase 4, especially
-AcceptedInterpretation, accepted operating context, validated AI outputs,
+AcceptedSemanticDelta, accepted operating context, validated AI outputs,
 blocked outputs, and audit evidence.
 ```
 
@@ -132,8 +132,8 @@ Roadmap v7 extends this into:
 ```text
 AI may interpret and extract.
 Platform validates semantic signals.
-AcceptedInterpretation may guide downstream runtime decisions.
-AcceptedInterpretation does not directly commit durable memory, CRM truth,
+AcceptedSemanticDelta may guide downstream runtime decisions.
+AcceptedSemanticDelta does not directly commit durable memory, CRM truth,
 registration truth, payment truth, enrollment truth, seat truth, or official status.
 ```
 
@@ -479,9 +479,9 @@ response validation, or audit truth.
 ### Locked Boundary
 
 ```text
-AcceptedInterpretation is not durable memory.
-AcceptedInterpretation is not CRM truth.
-AcceptedInterpretation is not official application, registration, enrollment,
+AcceptedSemanticDelta is not durable memory.
+AcceptedSemanticDelta is not CRM truth.
+AcceptedSemanticDelta is not official application, registration, enrollment,
 payment, seat, or business-status truth.
 ```
 
@@ -498,11 +498,11 @@ Student Message
   ↓
 FastBoundarySignalScanner
   ↓
-AIInterpretationClient
+AISemanticDeltaExtractor
   ↓
-InterpretationValidator
+SemanticDeltaValidator
   ↓
-AcceptedInterpretation
+AcceptedSemanticDelta
   ↓
 BoundaryResolver
   ↓
@@ -525,113 +525,46 @@ AuditEventWriter
 
 ### Locked Signal Scope
 
-Initial Phase 4 implementation produces:
+Initial Phase 4 v1.3 implementation produces semantic delta proposals:
 
-1. hard-coded `flowDriving` fields
-2. flexible `qualityEnhancingSignals[]`
-3. `boundaryCandidateSignals[]`
-4. `knowledgeNeedSignals[]`
-5. `contradictionSignals[]`
-6. `confidenceSummary`
+1. `memoryDeltaCandidates.flowDrivingDeltas`
+2. `memoryDeltaCandidates.qualityEnhancingDeltas[]`
+3. `runtimeOnlySignalCandidates[]`
 
-Deferred signal categories:
+Runtime-only signals cover boundary risk, knowledge need, student posture, ambiguous proceed language, and possible correction/contradiction. They do not become durable memory by default.
 
-1. explicit `journey_state_candidate`
-2. explicit `primary_action_candidate`
-3. explicit `recommendation_readiness_candidate`
-4. explicit detour/resume signal
-5. emotion/friction signal
-
-### Locked Flow-Driving Fields
-
-Flow-driving signals are hard-coded because they affect counseling state and next actions.
+### Locked SemanticDeltaResult
 
 ```ts
-type FlowDrivingSignals = {
-  coursesConsidering: CourseSignal[];
-  confirmedCounselingCoursePreference?: CourseSignal;
-
-  universitiesConsidering: UniversitySignal[];
-  confirmedCounselingUniversityPreference?: UniversitySignal;
-
-  pathwaysConsidering: PathwaySignal[];
-  confirmedCounselingPathwayPreference?: PathwaySignal;
-
-  academicResult?: AcademicResultSignal;
-  minimumProfileSignals?: MinimumProfileSignals;
-
-  preferenceStrengthCandidate?: PreferenceStrengthSignal;
-  readinessToRegisterSignal?: ReadinessSignal;
+type SemanticDeltaResult = {
+  memoryDeltaCandidates: {
+    flowDrivingDeltas: {
+      academicResults: AcademicResultDelta[];
+      coursesConsidering: CourseDelta[];
+      confirmedCounselingCoursePreferences: CourseDelta[];
+      universitiesConsidering: UniversityDelta[];
+      confirmedCounselingUniversityPreferences: UniversityDelta[];
+      pathwaysConsidering: PathwayDelta[];
+      confirmedCounselingPathwayPreferences: PathwayDelta[];
+    };
+    qualityEnhancingDeltas: QualityEnhancingDelta[];
+  };
+  runtimeOnlySignalCandidates: RuntimeOnlySignalCandidate[];
 };
 ```
 
-Use counseling-safe names:
+The LLM does not output platform metadata, minimum-profile state, route readiness, operating context, or official business truth.
 
-```text
-confirmedCounselingCoursePreference
-confirmedCounselingUniversityPreference
-confirmedCounselingPathwayPreference
-```
-
-Do not use ambiguous names like `confirmedCourse` or `confirmedUniversity` because counseling preference is not official action.
-
-### Locked Flexible Context Field
-
-Quality-enhancing signals remain flexible:
+### Locked AcceptedSemanticDelta
 
 ```ts
-type QualityEnhancingSignal = BaseSignal & {
-  type:
-    | "concern"
-    | "budget_sensitivity"
-    | "location_preference"
-    | "family_influence"
-    | "learning_preference"
-    | "study_mode_preference"
-    | "timeline_preference"
-    | "career_interest"
-    | "personality_preference"
-    | "other";
-
-  value: Record<string, unknown>;
-  usefulness: "low" | "medium" | "high";
-  sensitivity: "none" | "possibly_sensitive" | "sensitive";
-};
-```
-
-### Locked InterpretationResult
-
-```ts
-type InterpretationResult = {
-  conversationId: string;
-  turnId: string;
-  messageId: string;
-
-  flowDriving: FlowDrivingSignals;
-  qualityEnhancingSignals: QualityEnhancingSignal[];
-
-  boundaryCandidateSignals: BoundaryCandidateSignal[];
-  knowledgeNeedSignals: KnowledgeNeedSignal[];
-  contradictionSignals: ContradictionSignal[];
-
-  confidenceSummary: ConfidenceSummary;
-};
-```
-
-### Locked AcceptedInterpretation
-
-```ts
-type AcceptedInterpretation = {
-  conversationId: string;
-  turnId: string;
-  messageId: string;
-
-  accepted: InterpretationResult;
-
-  rejectedSignals: RejectedSignal[];
-  downgradedSignals: DowngradedSignal[];
-  validationEvents: InterpretationValidationEvent[];
-
+type AcceptedSemanticDelta = {
+  platformMetadata: SemanticDeltaMetadata;
+  acceptedMemoryDeltas: AcceptedMemoryDeltas;
+  acceptedRuntimeOnlySignals: AcceptedRuntimeOnlySignal[];
+  rejectedCandidates: RejectedSemanticCandidate[];
+  downgradedCandidates: DowngradedSemanticCandidate[];
+  validationEvents: SemanticDeltaValidationEvent[];
   status:
     | "accepted"
     | "accepted_with_downgrades"
@@ -641,20 +574,20 @@ type AcceptedInterpretation = {
 };
 ```
 
-### Locked InterpretationValidator Sequence
+### Locked SemanticDeltaValidator Sequence
 
 ```text
-1. schema validation
+1. schema normalization
 2. evidence validation
-3. flow-driving promotion validation
-4. boundary signal validation
-5. quality-enhancing signal validation
-6. contradiction validation
+3. flow-driving delta validation
+4. quality-enhancing delta validation
+5. runtime-only signal validation
+6. fast boundary signal preservation
 ```
 
 ### Locked Consumption Rule
 
-`AcceptedInterpretation` is a shared per-turn semantic artifact.
+`AcceptedSemanticDelta` is a shared per-turn semantic artifact.
 
 It may guide:
 
@@ -682,8 +615,8 @@ It does not directly commit:
 The first Phase 4 implementation should upgrade the existing prototype with:
 
 1. FastBoundarySignalScanner
-2. AIInterpretationClient
-3. InterpretationValidator
+2. AISemanticDeltaExtractor
+3. SemanticDeltaValidator
 4. BoundaryResolver integration
 5. OperatingContextManager integration
 6. KnowledgeGateway integration
@@ -705,8 +638,8 @@ Counseling Runtime API
   ↓
 CounselingTurnOrchestrator
   ├── FastBoundarySignalScanner
-  ├── AIInterpretationClient
-  ├── InterpretationValidator
+  ├── AISemanticDeltaExtractor
+  ├── SemanticDeltaValidator
   ├── BoundaryResolver
   ├── OperatingContextManager
   ├── SkillControlService
@@ -753,7 +686,7 @@ AI-controlled:
 2. counseling explanation style
 3. semantic interpretation proposals
 4. extraction proposals
-5. structured `InterpretationResult` proposal
+5. structured `SemanticDeltaResult` proposal
 6. recommendation explanation inside selected skills
 7. clarification phrasing
 8. detour/resume wording
@@ -763,7 +696,7 @@ Platform-controlled:
 
 1. fast boundary scanning
 2. interpretation validation
-3. accepted interpretation production
+3. accepted semantic delta production
 4. final boundary result
 5. accepted operating context
 6. final skill selection
@@ -892,13 +825,13 @@ semantic signals rather than scattered heuristics or uncontrolled summaries?
 1. Phase 4 prioritizes memory correctness and boundary/red-zone detection.
 2. Phase 4 uses split safety scan + AI semantic interpretation + platform validation.
 3. FastBoundarySignalScanner runs before AI interpretation.
-4. AIInterpretationClient produces one full InterpretationResult in the first implementation.
-5. InterpretationValidator validates, downgrades, rejects, or flags clarification.
-6. AcceptedInterpretation is a shared per-turn semantic artifact.
+4. AISemanticDeltaExtractor produces one full SemanticDeltaResult in the first implementation.
+5. SemanticDeltaValidator validates, downgrades, rejects, or flags clarification.
+6. AcceptedSemanticDelta is a shared per-turn semantic artifact.
 7. Flow-driving signals are hard-coded first-class fields.
-8. Quality-enhancing signals remain flexible in qualityEnhancingSignals[].
+8. Quality-enhancing signals remain flexible in qualityEnhancingDeltas[].
 9. Boundary, knowledge, and contradiction signals remain separate.
-10. AcceptedInterpretation does not directly commit durable memory or official truth.
+10. AcceptedSemanticDelta does not directly commit durable memory or official truth.
 11. BoundaryResolver remains final authority for zone and handoff.
 12. Durable memory design remains Phase 5.
 ```
@@ -930,7 +863,7 @@ enrollment, seat, or CRM truth?
 
 Phase 5 should consume:
 
-1. `AcceptedInterpretation`
+1. `AcceptedSemanticDelta`
 2. accepted operating context updates
 3. validated memory outputs
 4. validated recommendation outputs
@@ -949,7 +882,7 @@ Phase 4 introduced:
 
 ```text
 flowDriving fields
-qualityEnhancingSignals[]
+qualityEnhancingDeltas[]
 ```
 
 Phase 5 must decide how these map into durable memory.
@@ -971,7 +904,7 @@ But Phase 5 must choose final naming and storage behavior.
 ```text
 1. core counseling state vs supporting counseling context
 2. durable representation of flowDriving fields
-3. durable representation of qualityEnhancingSignals[]
+3. durable representation of qualityEnhancingDeltas[]
 4. current truth vs historical event records
 5. active course direction
 6. active university direction
@@ -1048,7 +981,7 @@ Autonomous Student Memory & Counseling State Specification
 ```text
 How does the autonomous counselor know what is factually true, what it is allowed
 to expose, and when missing or conflicting knowledge requires caveat or handoff,
-using AcceptedInterpretation knowledge need signals, skill-declared knowledge
+using AcceptedSemanticDelta knowledge need signals, skill-declared knowledge
 needs, and governed source access?
 ```
 
@@ -1056,7 +989,7 @@ needs, and governed source access?
 
 Phase 6 should consume:
 
-1. accepted `knowledgeNeedSignals[]`
+1. accepted `knowledge-need runtime signals`
 2. accepted flow-driving course/university/pathway context
 3. accepted minimum profile signals
 4. accepted decision-criticality from interpretation
@@ -1069,7 +1002,7 @@ Knowledge routing should not depend only on the response-generation model notici
 ### Revised Key Topics
 
 ```text
-1. KnowledgeGateway input contract from AcceptedInterpretation
+1. KnowledgeGateway input contract from AcceptedSemanticDelta
 2. knowledge need signal taxonomy governance
 3. public university filter service integration
 4. Google Sheet KB integration
@@ -1125,7 +1058,7 @@ Business Knowledge & Source Governance Specification
 ```text
 How can the AI recommend courses, pathways, universities, and programs
 autonomously while maintaining quality, confidence discipline, explainability,
-and official-action separation using AcceptedInterpretation, durable counseling
+and official-action separation using AcceptedSemanticDelta, durable counseling
 memory, governed knowledge, selected skills, and runtime validation?
 ```
 
@@ -1202,7 +1135,7 @@ Recommendation & Decision Support Automation Specification
 ```text
 When must the AI stop counseling autonomously and hand off to a human, and what
 context should the human receive, using Phase 2 boundary rules, Phase 3 runtime
-validation, Phase 4 AcceptedInterpretation evidence, and Phase 5 durable memory?
+validation, Phase 4 AcceptedSemanticDelta evidence, and Phase 5 durable memory?
 ```
 
 ### Updated Design Goal After Phase 4 Approval
@@ -1214,7 +1147,7 @@ Example:
 ```text
 Student said: "I want to apply now."
 FastBoundarySignalScanner: ready_to_apply_or_register.
-AcceptedInterpretation: readinessToRegisterSignal, H1, high confidence.
+AcceptedSemanticDelta: readinessToRegisterSignal, H1, high confidence.
 BoundaryResolver: final zone red.
 Handoff: required.
 ```
@@ -1300,7 +1233,7 @@ But student statements and AI interpretation are not official truth unless confi
 4. official application status read
 5. official registration status read
 6. official payment status read if needed later
-7. CRM truth vs AcceptedInterpretation
+7. CRM truth vs AcceptedSemanticDelta
 8. CRM truth vs counseling memory
 9. confirmed counseling preference vs CRM application status
 10. readiness-to-register signal vs registration completion
@@ -1421,11 +1354,11 @@ Evaluation must test interpretation correctness explicitly.
 It is not enough to test final response quality. The platform must test:
 
 1. raw interpretation proposal quality
-2. accepted interpretation correctness
+2. accepted semantic delta correctness
 3. rejected/downgraded signal correctness
 4. fast boundary scanner recall
-5. boundary resolver use of accepted interpretation
-6. memory validator use of accepted interpretation
+5. boundary resolver use of accepted semantic delta
+6. memory validator use of accepted semantic delta
 7. knowledge gateway routing from accepted knowledge needs
 8. final response consistency with accepted semantic evidence
 
@@ -1444,7 +1377,7 @@ It is not enough to test final response quality. The platform must test:
 10. flowDriving.confirmedCounselingUniversityPreference extraction
 11. flowDriving.pathwaysConsidering extraction
 12. academicResult extraction
-13. minimumProfileSignals extraction
+13. minimum profile derivation from accepted deltas
 14. qualityEnhancingSignals useful concern retained
 15. qualityEnhancingSignals irrelevant noise rejected
 16. weak interest not over-promoted
@@ -1464,7 +1397,7 @@ It is not enough to test final response quality. The platform must test:
 30. unsupported factual claim blocked or caveated
 31. recommendation confidence downgraded when readiness is weak
 32. response/output mismatch corrected before final response
-33. malformed InterpretationResult repaired or rejected
+33. malformed SemanticDeltaResult repaired or rejected
 34. rejected/downgraded interpretation signals audited
 35. fastBoundarySignal and accepted boundary signal disagreement resolved safely
 36. SKILL.md selection remains metadata-compatible
@@ -1589,9 +1522,9 @@ boundaries?
 ```text
 student message
 → FastBoundarySignalScanner
-→ AIInterpretationClient
-→ InterpretationValidator
-→ AcceptedInterpretation
+→ AISemanticDeltaExtractor
+→ SemanticDeltaValidator
+→ AcceptedSemanticDelta
 → BoundaryResolver
 → OperatingContextManager
 → SkillControlService
@@ -1608,19 +1541,19 @@ student message
 ```text
 1. deterministic shell controls AI interpretation and AI counseling
 2. obvious red-zone scan runs before AI interpretation
-3. AI interpreter produces typed InterpretationResult
-4. InterpretationResult includes flowDriving fields
-5. InterpretationResult includes qualityEnhancingSignals[]
-6. InterpretationResult includes boundaryCandidateSignals[]
-7. InterpretationResult includes knowledgeNeedSignals[]
-8. InterpretationResult includes contradictionSignals[]
+3. AI interpreter produces typed SemanticDeltaResult
+4. SemanticDeltaResult includes flowDriving fields
+5. SemanticDeltaResult includes qualityEnhancingDeltas[]
+6. SemanticDeltaResult includes boundary runtime signals
+7. SemanticDeltaResult includes knowledge-need runtime signals
+8. SemanticDeltaResult includes ambiguity runtime signals
 9. evidence and confidence are required
-10. InterpretationValidator accepts, rejects, downgrades, or requires clarification
-11. AcceptedInterpretation is available as shared per-turn artifact
-12. BoundaryResolver consumes fast scanner + AcceptedInterpretation
+10. SemanticDeltaValidator accepts, rejects, downgrades, or requires clarification
+11. AcceptedSemanticDelta is available as shared per-turn artifact
+12. BoundaryResolver consumes fast scanner + AcceptedSemanticDelta
 13. OperatingContextManager consumes accepted flowDriving fields
 14. KnowledgeGateway consumes accepted knowledgeNeedSignals
-15. ValidationPipeline checks AI outputs against AcceptedInterpretation
+15. ValidationPipeline checks AI outputs against AcceptedSemanticDelta
 16. weak interest does not become confirmed preference
 17. confirmed counseling preference does not become registration truth
 18. ready-to-register intent triggers handoff
@@ -1671,8 +1604,8 @@ Production hardening must treat the interpretation layer as a monitored, testabl
 10. confidence calibration
 11. contradiction handling reliability
 12. FastBoundarySignalScanner maintenance
-13. AIInterpretationClient reliability
-14. InterpretationValidator reliability
+13. AISemanticDeltaExtractor reliability
+14. SemanticDeltaValidator reliability
 15. accepted/rejected/downgraded signal audit retention
 16. SKILL.md repository reliability
 17. approved skill index reliability
@@ -1741,10 +1674,10 @@ The recommended near-term build order is now:
 
 ```text
 1. Implement Phase 4 InterpretationLayer in the existing prototype.
-2. Add tests for InterpretationResult, AcceptedInterpretation, and validation behavior.
+2. Add tests for SemanticDeltaResult, AcceptedSemanticDelta, and validation behavior.
 3. Keep existing Phase 3 safety tests passing.
 4. Start Phase 5 memory exploration only after Phase 4 contracts are stable.
-5. Design memory around AcceptedInterpretation, not raw transcript.
+5. Design memory around AcceptedSemanticDelta, not raw transcript.
 6. Then expand KnowledgeGateway and recommendation with validated inputs.
 ```
 
@@ -1766,7 +1699,7 @@ Roadmap v7 keeps these risks visible:
 
 ```text
 1. live AI interpretation quality across real student language
-2. schema adherence for InterpretationResult across providers
+2. schema adherence for SemanticDeltaResult across providers
 3. fast boundary scanner false negatives
 4. AI interpretation missing subtle red-zone signals
 5. AI interpretation over-producing noisy quality signals
@@ -1774,7 +1707,7 @@ Roadmap v7 keeps these risks visible:
 7. confirmed counseling preference confused with registration intent
 8. student corrections overwriting useful history incorrectly
 9. knowledgeNeedSignals missing decision-critical factual needs
-10. AcceptedInterpretation being treated as durable memory too early
+10. AcceptedSemanticDelta being treated as durable memory too early
 11. memory design accidentally becoming CRM truth
 12. skill body prompting not yet fully proven
 13. production knowledge freshness
@@ -1797,7 +1730,7 @@ interpretation layer.
 
 The next active design phase is Phase 5: Student Memory & Counseling State.
 
-Phase 5 must build durable memory from AcceptedInterpretation and validated
+Phase 5 must build durable memory from AcceptedSemanticDelta and validated
 runtime outputs, not raw transcript or uncontrolled summaries.
 
 The most important memory design boundary remains:
@@ -1806,3 +1739,4 @@ recommendations, handoff readiness, and interpretation evidence.
 It must never become official application, registration, payment, enrollment,
 seat, or CRM truth.
 ```
+
