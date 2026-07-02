@@ -55,13 +55,20 @@ export class CounselingTurnOrchestrator {
       throw error;
     }
 
+    const studentId = conversationId;
+    const currentTruthBeforeTurn = await this.memoryStateService.deriveCurrentTruth({
+      studentId,
+      conversationId
+    });
+
     const turnInput = {
       conversationId,
       turnId: crypto.randomUUID(),
       messageId: crypto.randomUUID(),
       studentMessage,
       previousRuntimeState: previousState,
-      recentConversationSummary: previousState.messages.slice(-6).map((message) => `${message.role}: ${message.content}`).join("\n")
+      recentConversationSummary: previousState.messages.slice(-6).map((message) => `${message.role}: ${message.content}`).join("\n"),
+      currentTruthBeforeTurn: currentTruthForExtraction(currentTruthBeforeTurn)
     };
 
     const fastBoundarySignals = this.boundaryEngine.scan(turnInput);
@@ -72,16 +79,10 @@ export class CounselingTurnOrchestrator {
       turnInput,
       extractor: this.aiSemanticDeltaExtractor
     });
-    const studentId = conversationId;
-    const currentTruthBeforeCommit = await this.memoryStateService.deriveCurrentTruth({
-      studentId,
-      conversationId,
-      turnId: turnInput.turnId
-    });
     const preResponseMemoryCommitResult = await this.memoryStateService.commitPreResponseStudentMemory({
       studentId,
       acceptedSemanticDelta,
-      currentTruthBeforeCommit
+      currentTruthBeforeCommit: currentTruthBeforeTurn
     });
     const currentTruth = await this.memoryStateService.deriveCurrentTruth({
       studentId,
@@ -181,7 +182,7 @@ export class CounselingTurnOrchestrator {
       validationResult,
       commitResult,
       memoryStateAudit: {
-        currentTruthBeforeCommit,
+        currentTruthBeforeTurn,
         currentTruthAfterPreResponseCommit: currentTruth,
         currentTruthAfterPostResponseCommit: finalCurrentTruth,
         preResponseMemoryCommitResult,
@@ -227,6 +228,26 @@ export class CounselingTurnOrchestrator {
 
 function shouldRetryResponse(validationResult) {
   return validationResult.status === "safe_fallback";
+}
+
+function currentTruthForExtraction(currentTruth) {
+  return {
+    instruction: "Read-only context. Use only to interpret the new student message. Do not re-emit existing memory unless the student restates, corrects, rejects, or changes it.",
+    academicResultStatus: currentTruth.academic.academicResultStatus,
+    latestUsableAcademicResult: currentTruth.academic.latestUsableAcademicResult?.rawText,
+    courseDirectionStatus: currentTruth.direction.courseDirectionStatus,
+    universityDirectionStatus: currentTruth.direction.universityDirectionStatus,
+    pathwayDirectionStatus: currentTruth.direction.pathwayDirectionStatus,
+    activeCourseDirections: currentTruth.direction.activeCourseDirections.map((item) => ({ value: item.value, status: item.status })),
+    activeUniversityDirections: currentTruth.direction.activeUniversityDirections.map((item) => ({ value: item.value, status: item.status })),
+    activePathwayDirections: currentTruth.direction.activePathwayDirections.map((item) => ({ value: item.value, status: item.status })),
+    preferenceStrength: currentTruth.preference.preferenceStrength,
+    confirmedCounselingPreference: currentTruth.preference.confirmedCounselingPreference,
+    hardConstraints: currentTruth.qualityContext.hardConstraints.map((item) => item.value),
+    softPreferences: currentTruth.qualityContext.softPreferences.map((item) => item.value),
+    currentDecisionBlockers: currentTruth.decisionContext.currentDecisionBlockers.map((item) => item.value),
+    handoffRequired: currentTruth.handoffReadiness.handoffRequired
+  };
 }
 
 function behaviorForBoundary(boundaryResult) {

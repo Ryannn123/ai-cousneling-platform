@@ -56,7 +56,7 @@ export class AISemanticDeltaExtractor {
         input: [
           {
             role: "system",
-            content: "Extract SemanticDeltaResult JSON only. It is an untrusted proposal, not truth. Do not output platform metadata, minimum-profile state, route readiness, operating context, durable memory, CRM truth, or official application, registration, payment, enrollment, or seat truth."
+            content: "Extract SemanticDeltaResult JSON only. It is an untrusted proposal, not truth. currentTruthBeforeTurn is read-only context for interpreting the new student message. Do not re-emit existing memory as a new delta unless the student restates, corrects, rejects, or changes it. Do not output platform metadata, minimum-profile state, route readiness, operating context, durable memory, CRM truth, or official application, registration, payment, enrollment, or seat truth."
           },
           {
             role: "user",
@@ -111,7 +111,7 @@ export class AISemanticDeltaExtractor {
 function geminiSemanticDeltaRequest(turnInput, fastBoundarySignals, model) {
   return {
     model: cleanGeminiModelName(model),
-    system_instruction: "Extract SemanticDeltaResult JSON. Include short evidence quotes for every candidate.",
+    system_instruction: "Extract SemanticDeltaResult JSON. Include short evidence quotes for every candidate. currentTruthBeforeTurn is read-only context for interpreting the new student message. Do not re-emit existing memory as a new delta unless the student restates, corrects, rejects, or changes it.",
     input: JSON.stringify(semanticDeltaInput(turnInput, fastBoundarySignals)),
     store: false,
     response_format: {
@@ -176,6 +176,7 @@ function semanticDeltaInput(turnInput, fastBoundarySignals) {
   delete input.conversationId;
   delete input.turnId;
   delete input.messageId;
+  delete input.previousRuntimeState;
   if (fastBoundarySignals === undefined) return input;
   return { ...input, fastBoundarySignals };
 }

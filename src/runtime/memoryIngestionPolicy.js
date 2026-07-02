@@ -1,6 +1,7 @@
 import { OFFICIAL_TRUTH_PATTERN } from "./memoryEventValidator.js";
 
 const HANDOFF_OUTPUTS = new Set(["readiness_to_register_signal", "handoff_required"]);
+const DECISION_SUPPORT_OUTPUTS = new Set(["shortlist"]);
 
 export class MemoryIngestionPolicy {
   preResponseDecisions({ studentId, acceptedSemanticDelta, currentTruthBeforeCommit } = {}) {
@@ -142,13 +143,15 @@ export class MemoryIngestionPolicy {
   }
 
   aiOutputDecision({ studentId, acceptedSemanticDelta, selectedSkillContext, acceptedDeltaId, output }) {
-    const category = HANDOFF_OUTPUTS.has(output.type)
-      ? "handoff_readiness"
-      : output.type === "confirmed_counseling_preference"
-        ? "counseling_preference"
-        : output.type === "recommendation_shown"
-          ? "recommendation_interaction"
-          : "decision_support";
+    const category = categoryForAiOutput(output);
+    if (!category) {
+      return this.auditOnlyDecision({
+        acceptedDeltaId,
+        output,
+        reason: "ai_output_is_agent_action_not_durable_memory"
+      });
+    }
+
     const status = output.type === "confirmed_counseling_preference" ? "confirmed_counseling_preference" : output.type;
     const delta = {
       operation: "add_new",
@@ -171,6 +174,26 @@ export class MemoryIngestionPolicy {
       },
       projectionIntent: category === "decision_support" ? "history_only" : "may_update_current_truth"
     });
+  }
+
+  auditOnlyDecision({ acceptedDeltaId, output, reason }) {
+    return {
+      acceptedDeltaId,
+      decision: "audit_only",
+      commitClass: "audit_only",
+      operation: "add_new",
+      projectionIntent: "audit_only_no_projection",
+      reasons: [reason],
+      warnings: [],
+      auditOnlyRecord: {
+        outputType: output?.type,
+        value: output?.value || output
+      },
+      officialTruthCheck: {
+        passed: !OFFICIAL_TRUTH_PATTERN.test(JSON.stringify(output || {})),
+        violationType: OFFICIAL_TRUTH_PATTERN.test(JSON.stringify(output || {})) ? "official_truth_not_memory" : undefined
+      }
+    };
   }
 
   studentDeltaDecision(input) {
@@ -250,4 +273,12 @@ function evidenceFromOutput(output) {
 
 function valueOf(delta) {
   return delta?.value || delta?.courseOrProgram || delta?.university || delta?.pathway;
+}
+
+function categoryForAiOutput(output = {}) {
+  if (HANDOFF_OUTPUTS.has(output.type)) return "handoff_readiness";
+  if (output.type === "confirmed_counseling_preference") return "counseling_preference";
+  if (output.type === "recommendation_shown") return "recommendation_interaction";
+  if (DECISION_SUPPORT_OUTPUTS.has(output.type)) return "decision_support";
+  return null;
 }

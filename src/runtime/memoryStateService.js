@@ -54,6 +54,11 @@ export class MemoryStateService {
   async commitDecisions({ studentId, acceptedSemanticDelta, selectedSkillContext, decisions }) {
     const result = emptyCommitResult();
     for (const decision of decisions) {
+      if (decision.decision === "audit_only") {
+        result.auditEventIds.push(await this.writeMemoryAudit({ studentId, acceptedSemanticDelta, decision, status: "audit_only" }));
+        continue;
+      }
+
       if (decision.decision !== "create_memory_event") {
         result.rejectedDeltaIds.push(decision.acceptedDeltaId);
         result.warnings.push(...decision.reasons);
@@ -89,7 +94,7 @@ export class MemoryStateService {
     const audit = await this.auditEventStore.appendAuditEvent({
       event: {
         eventType: "memory_ingestion",
-        severity: status === "appended" || status === "already_exists" ? "info" : "warning",
+        severity: ["appended", "already_exists", "audit_only"].includes(status) ? "info" : "warning",
         studentId,
         conversationId: meta.conversationId,
         turnId: meta.turnId,
@@ -103,7 +108,7 @@ export class MemoryStateService {
         details: { decision, validationStatus: validation?.status, append },
         safetyFlags: {
           officialActionRisk: decision.officialTruthCheck?.passed === false,
-          memoryPollutionRisk: status !== "appended" && status !== "already_exists",
+          memoryPollutionRisk: !["appended", "already_exists", "audit_only"].includes(status),
           crmTruthLeakageRisk: decision.officialTruthCheck?.passed === false
         }
       }

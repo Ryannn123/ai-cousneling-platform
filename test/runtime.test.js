@@ -1074,6 +1074,75 @@ test("phase 5 duplicate idempotency keys do not duplicate memory events", async 
   assert.equal(events.length, 1);
 });
 
+test("phase 5 treats AI action memory outputs as audit-only", async () => {
+  const { service, memoryEventStore } = await phase5MemoryHarness();
+  const acceptedSemanticDelta = acceptedDeltaFromRaw(semanticDeltaFixture(), {
+    conversationId: "student-phase5-ai-action",
+    turnId: "turn-phase5-ai-action",
+    messageId: "message-phase5-ai-action"
+  });
+
+  const commit = await service.commitPostResponseAIOutputs({
+    studentId: "student-phase5-ai-action",
+    acceptedSemanticDelta,
+    validatedAIOutput: { response: { studentMessage: "Please share your academic results." } },
+    validationResult: {
+      status: "accepted",
+      acceptedOutputs: {
+        memoryOutputs: [{
+          type: "minimum_profile_requested",
+          value: {},
+          confidence: "high",
+          evidence: "Minimum profile incomplete."
+        }],
+        recommendationOutputs: []
+      }
+    },
+    finalBoundaryResult: { finalZone: "green" },
+    selectedSkillContext: { selectedRuntimeSkill: { name: "minimum-profile-collection" } }
+  });
+  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-ai-action" });
+
+  assert.deepEqual(commit.appendedMemoryEventIds, []);
+  assert.deepEqual(commit.rejectedDeltaIds, []);
+  assert.equal(commit.auditEventIds.length, 1);
+  assert.deepEqual(events, []);
+});
+
+test("phase 5 allows real shortlist output as decision-support memory", async () => {
+  const { service, memoryEventStore } = await phase5MemoryHarness();
+  const acceptedSemanticDelta = acceptedDeltaFromRaw(semanticDeltaFixture(), {
+    conversationId: "student-phase5-shortlist",
+    turnId: "turn-phase5-shortlist",
+    messageId: "message-phase5-shortlist"
+  });
+
+  const commit = await service.commitPostResponseAIOutputs({
+    studentId: "student-phase5-shortlist",
+    acceptedSemanticDelta,
+    validatedAIOutput: { response: { studentMessage: "Here is a shortlist." } },
+    validationResult: {
+      status: "accepted",
+      acceptedOutputs: {
+        memoryOutputs: [{
+          type: "shortlist",
+          value: { options: ["Psychology", "Business"] },
+          confidence: "medium",
+          evidence: "Compare Psychology and Business"
+        }],
+        recommendationOutputs: []
+      }
+    },
+    finalBoundaryResult: { finalZone: "green" },
+    selectedSkillContext: { selectedRuntimeSkill: { name: "shortlist-comparison" } }
+  });
+  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-shortlist" });
+
+  assert.equal(commit.appendedMemoryEventIds.length, 1);
+  assert.equal(events[0].category, "decision_support");
+  assert.equal(events[0].payload.type, "shortlist");
+});
+
 test("phase 5 current truth projection is deterministic from memory events", () => {
   const projector = new CurrentTruthProjector();
   const events = [{
@@ -1361,6 +1430,34 @@ test("phase 5 response retry does not duplicate pre-response memory", async () =
   assert.equal(result.preResponseMemoryCommitResult.ignoredDuplicateEventIds.length, 0);
   assert.equal(result.currentTruth.direction.activeCourseDirections.length, 1);
   assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
+});
+
+test("phase 5 passes current truth before turn into semantic extraction", async () => {
+  const currentTruthInputs = [];
+  const app = testApp({
+    aiSemanticDeltaExtractor: {
+      provider: "mock",
+      model: "test",
+      async extract(turnInput, fastBoundarySignals = []) {
+        currentTruthInputs.push(turnInput.currentTruthBeforeTurn);
+        return mockSemanticDelta(turnInput, fastBoundarySignals);
+      }
+    }
+  });
+  const conversation = await app.createConversation();
+  await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "Psychology sounds interesting."
+  });
+  await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "Actually, I want IT."
+  });
+
+  assert.equal(currentTruthInputs[0].courseDirectionStatus, "unknown");
+  assert.equal(currentTruthInputs[1].courseDirectionStatus, "considering_some_courses");
+  assert.deepEqual(currentTruthInputs[1].activeCourseDirections, [{ value: "Psychology", status: "considering" }]);
+  assert.match(currentTruthInputs[1].instruction, /read-only context/i);
 });
 
 test("gemini provider calls interactions and parses JSON output", async () => {
