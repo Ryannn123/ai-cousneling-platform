@@ -20,10 +20,6 @@ Use modern JavaScript modules with explicit `.js` imports. Match the existing st
 
 Tests use `node:test` and `node:assert/strict`. Add coverage in `test/runtime.test.js` or a new `*.test.js` file under `test/` when behavior changes. Name tests by the behavior being protected, such as `official-action wording variants hand off instead of continuing counseling`. Include both happy paths and safety boundaries for counseling state, skill selection, output validation, and provider fallbacks.
 
-## Commit & Pull Request Guidelines
-
-No Git history is available in this workspace, so use clear, imperative commit subjects such as `Add red-zone handoff validation`. Pull requests should include a short behavior summary, test results from `npm test`, linked issue or spec references when relevant, and screenshots for visible UI changes in `public/`.
-
 ## Security & Configuration Tips
 
 Keep secrets in `.env` and do not commit API keys or generated runtime logs containing sensitive conversation data. Validate any new memory or recommendation output through `ValidationPipeline` before committing it to runtime state. Official actions such as registration, payment, enrollment, reservation, or application submission must remain red-zone handoff behavior.
