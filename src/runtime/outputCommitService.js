@@ -14,17 +14,14 @@ export async function loadConversation(conversationId) {
   return readJson(conversationPath(conversationId));
 }
 
-export async function commitTurn({ conversationId, studentMessage, previousState, profileSignals, operatingContext, validationResult }) {
+export async function commitTurn({ conversationId, studentMessage, previousState, operatingContext, validationResult, currentTruth }) {
   const now = new Date().toISOString();
   const state = previousState || newConversationState(conversationId, now);
-  const committedContext = {
-    ...operatingContext,
-    ...validationResult.acceptedContextUpdate
-  };
+  const committedContext = operatingContext;
 
   state.updatedAt = now;
   state.operatingContext = committedContext;
-  state.profile = { ...state.profile, ...profileSignals };
+  state.currentTruth = currentTruth;
   state.messages.push({ role: "student", content: studentMessage, timestamp: now });
   state.messages.push({ role: "assistant", content: validationResult.finalResponse, timestamp: now });
 
@@ -53,7 +50,7 @@ function newConversationState(conversationId, now) {
     createdAt: now,
     updatedAt: now,
     operatingContext: DEFAULT_CONTEXT,
-    profile: {},
+    currentTruth: null,
     messages: [],
     memoryOutputs: [],
     recommendationOutputs: [],

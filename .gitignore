@@ -1,4 +1,5 @@
 node_modules/
 data/runtime/audit.ndjson
+data/runtime/memory-events.ndjson
 data/runtime/conversations/*.json
 .env

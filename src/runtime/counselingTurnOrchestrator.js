@@ -10,6 +10,7 @@ import { SemanticDeltaValidator } from "./semanticDeltaValidator.js";
 import { ValidationPipeline } from "./validationPipeline.js";
 import { commitTurn, createConversation, loadConversation } from "./outputCommitService.js";
 import { writeAuditEvent } from "./auditEventWriter.js";
+import { MemoryStateService } from "./memoryStateService.js";
 
 export class CounselingTurnOrchestrator {
   constructor(services = {}) {
@@ -21,6 +22,7 @@ export class CounselingTurnOrchestrator {
     this.aiSemanticDeltaExtractor = services.aiSemanticDeltaExtractor || new AISemanticDeltaExtractor();
     this.semanticDeltaValidator = services.semanticDeltaValidator || new SemanticDeltaValidator();
     this.validationPipeline = services.validationPipeline || new ValidationPipeline();
+    this.memoryStateService = services.memoryStateService || new MemoryStateService();
   }
 
   async createConversation() {
@@ -70,8 +72,24 @@ export class CounselingTurnOrchestrator {
       turnInput,
       extractor: this.aiSemanticDeltaExtractor
     });
+    const studentId = conversationId;
+    const currentTruthBeforeCommit = await this.memoryStateService.deriveCurrentTruth({
+      studentId,
+      conversationId,
+      turnId: turnInput.turnId
+    });
+    const preResponseMemoryCommitResult = await this.memoryStateService.commitPreResponseStudentMemory({
+      studentId,
+      acceptedSemanticDelta,
+      currentTruthBeforeCommit
+    });
+    const currentTruth = await this.memoryStateService.deriveCurrentTruth({
+      studentId,
+      conversationId,
+      turnId: turnInput.turnId
+    });
     const boundaryResult = this.boundaryEngine.evaluate(turnInput, { fastBoundarySignals, acceptedSemanticDelta });
-    const { context: operatingContext, profileSignals } = this.operatingContextManager.build(previousState, turnInput, boundaryResult, acceptedSemanticDelta);
+    const { context: operatingContext } = this.operatingContextManager.build(previousState, turnInput, boundaryResult, acceptedSemanticDelta, currentTruth);
     const skillSelection = await this.skillControlService.select(operatingContext, boundaryResult);
 
     // Checkpoint 1: platform-controlled context, boundary, skill, and knowledge before AI text.
@@ -80,6 +98,7 @@ export class CounselingTurnOrchestrator {
       studentMessage,
       conversationContext: turnInput.recentConversationSummary,
       acceptedSemanticDelta: semanticDeltaSummary(acceptedSemanticDelta),
+      currentTruth,
       operatingContext,
       boundaryResult,
       skillSelection,
@@ -98,16 +117,58 @@ export class CounselingTurnOrchestrator {
         uncertaintyLevel: knowledgeAnswer.uncertaintyLevel
       } : undefined
     };
-    const aiExecutionResult = await this.aiExecutionClient.execute(executionContext);
+    let aiExecutionResult = await this.aiExecutionClient.execute(executionContext);
     // Checkpoint 2: AI output is only a proposal until validation and commit accept it.
-    const validationResult = this.validationPipeline.validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedSemanticDelta });
+    let validationResult = this.validationPipeline.validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedSemanticDelta });
+    let responseRetry = null;
+    if (shouldRetryResponse(validationResult)) {
+      const retryExecutionContext = {
+        ...executionContext,
+        responseRetry: {
+          attempt: 1,
+          previousValidationStatus: validationResult.status,
+          validationEvents: validationResult.validationEvents
+        }
+      };
+      const retryAiExecutionResult = await this.aiExecutionClient.execute(retryExecutionContext);
+      const retryValidationResult = this.validationPipeline.validate({
+        aiExecutionResult: retryAiExecutionResult,
+        boundaryResult,
+        operatingContext,
+        skillSelection,
+        acceptedSemanticDelta
+      });
+      responseRetry = {
+        attempted: true,
+        firstValidationStatus: validationResult.status,
+        retryValidationStatus: retryValidationResult.status
+      };
+      aiExecutionResult = retryAiExecutionResult;
+      validationResult = {
+        ...retryValidationResult,
+        responseRetry
+      };
+    }
+    const postResponseMemoryCommitResult = await this.memoryStateService.commitPostResponseAIOutputs({
+      studentId,
+      acceptedSemanticDelta,
+      validatedAIOutput: aiExecutionResult,
+      validationResult,
+      finalBoundaryResult: boundaryResult,
+      selectedSkillContext: skillSelection
+    });
+    const finalCurrentTruth = await this.memoryStateService.deriveCurrentTruth({
+      studentId,
+      conversationId,
+      turnId: turnInput.turnId
+    });
     const commitResult = await commitTurn({
       conversationId,
       studentMessage,
       previousState,
-      profileSignals,
       operatingContext,
-      validationResult
+      validationResult,
+      currentTruth: finalCurrentTruth
     });
     const auditEvent = await writeAuditEvent({
       conversationId,
@@ -119,6 +180,14 @@ export class CounselingTurnOrchestrator {
       aiExecutionResult,
       validationResult,
       commitResult,
+      memoryStateAudit: {
+        currentTruthBeforeCommit,
+        currentTruthAfterPreResponseCommit: currentTruth,
+        currentTruthAfterPostResponseCommit: finalCurrentTruth,
+        preResponseMemoryCommitResult,
+        postResponseMemoryCommitResult,
+        responseRetry
+      },
       semanticDeltaAudit: {
         rawSemanticDelta,
         acceptedSemanticDelta,
@@ -145,12 +214,19 @@ export class CounselingTurnOrchestrator {
       fastBoundarySignals,
       boundaryResult,
       operatingContext: commitResult.committedContext,
+      currentTruth: finalCurrentTruth,
       skillSelection,
       validationResult,
       commitResult,
+      preResponseMemoryCommitResult,
+      postResponseMemoryCommitResult,
       auditEvent
     };
   }
+}
+
+function shouldRetryResponse(validationResult) {
+  return validationResult.status === "safe_fallback";
 }
 
 function behaviorForBoundary(boundaryResult) {

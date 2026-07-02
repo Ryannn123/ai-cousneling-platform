@@ -1,10 +1,6 @@
 import { DEFAULT_CONTEXT } from "./constants.js";
 
 const FACTUAL_DETOUR = /\b(fee|fees|cost|tuition|location|campus|ranking|rank|duration|pathway|intake)\b/i;
-const RESULTS = /\b(spm|a[- ]?level|foundation|diploma|cgpa|gpa|result|results|grades?|credits?)\b/i;
-const COURSE = /\b(psychology|business|it|computer science|design|engineering|accounting)\b/i;
-const UNIVERSITY = /\b(university|college|sunway|taylor'?s|taylors|monash|apu|inti|help|utar|university [ab]|demo metropolitan university|demo valley university|demo tech institute)\b/i;
-const PATHWAY = /\b(foundation|diploma|a[- ]?level|degree|transfer|pathway)\b/i;
 const COMPARE = /\b(compare|versus|vs|shortlist|better|between)\b/i;
 const DEFERRAL = /\b(not sure|think about|later|maybe|undecided|confused)\b/i;
 const CONFIRM_PREF = /\b(my choice|choose|let'?s go with|this option|for now|prefer .+ over)\b/i;
@@ -12,30 +8,29 @@ const NO_COURSE_DIRECTION = /\b(don'?t know what course|do not know what course|
 const NO_UNIVERSITY_DIRECTION = /\b(don'?t know (which )?university|do not know (which )?university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university|what course or university)\b/i;
 
 export class OperatingContextManager {
-  build(previousRuntimeState, turnInput, boundaryResult, acceptedSemanticDelta) {
+  build(previousRuntimeState, turnInput, boundaryResult, acceptedSemanticDelta, currentTruthProjection) {
+    if (!currentTruthProjection) throw new Error("currentTruthProjection is required");
+
     const previous = previousRuntimeState?.operatingContext || DEFAULT_CONTEXT;
     const context = structuredClone(previous);
     const text = turnInput.studentMessage || "";
-    const flowDriving = flowDrivingFromSemanticDelta(acceptedSemanticDelta);
-    const qualityEnhancingDeltas = acceptedSemanticDelta?.acceptedMemoryDeltas?.qualityEnhancingDeltas || [];
     const runtimeSignals = acceptedSemanticDelta?.acceptedRuntimeOnlySignals || [];
+    const route = routeWithCurrentTurnStatus(currentTruthProjection, text);
+    const direction = currentTruthProjection.direction;
+    const preference = currentTruthProjection.preference;
 
     context.currentZone = boundaryResult.finalZone;
     context.handoffStatus = boundaryResult.handoffStatus;
+    context.profileCompleteness = route.minimumProfileCompletion;
+    context.minimumProfileRoute = route.minimumProfileRoute;
+    context.recommendationReadiness = currentTruthProjection.recommendationReadiness.level;
+    context.preferenceStrength = preference.preferenceStrength === "none" ? undefined : preference.preferenceStrength;
+    context.currentTruth = currentTruthSummary(currentTruthProjection);
     delete context.overlayState;
 
-    const profileSignals = buildProfileSignals(previousRuntimeState?.profile, flowDriving, text);
-    const minimumComplete = profileSignals.academicResultKnown
-      && profileSignals.courseDirectionStatusKnown
-      && profileSignals.universityDirectionStatusKnown;
+    const activeDirection = activeDirectionFromCurrentTruth(currentTruthProjection);
+    if (activeDirection) context.activeStudentDirection = activeDirection;
 
-    context.profileCompleteness = minimumComplete ? "minimum_complete" : "incomplete";
-    context.minimumProfileRoute = routeFromProfile(profileSignals, flowDriving, text);
-    const hasDirection = hasUsableDirection(profileSignals, flowDriving);
-    const hasFitSignals = qualityEnhancingDeltas.some((delta) => delta.usefulness === "high");
-    context.recommendationReadiness = profileSignals.academicResultKnown && hasDirection
-      ? (hasFitSignals ? "R3" : "R2")
-      : "R1";
     context.studentPosture = runtimeSignals.find((signal) => signal.kind === "student_posture")?.posture || postureFromContext(context.minimumProfileRoute, text);
     context.counselorResponseMode = responseModeFromContext(boundaryResult, context.studentPosture, context.minimumProfileRoute, text);
     context.decisionSupportMode = decisionSupportMode(text, context.primaryCounselingAction);
@@ -47,9 +42,7 @@ export class OperatingContextManager {
       : "not_applicable";
 
     const hasAmbiguity = runtimeSignals.some((signal) => signal.kind === "ambiguity");
-    const activeDirection = hasAmbiguity ? undefined : activeDirectionFromDeltas(flowDriving, text, context.activeStudentDirection);
-    if (activeDirection) context.activeStudentDirection = activeDirection;
-    if (flowDriving.preferenceStrengthCandidate?.level) context.preferenceStrength = flowDriving.preferenceStrengthCandidate.level;
+    const hasConfirmedPreference = Boolean(preference.confirmedCounselingPreference);
 
     if (boundaryResult.allowedNextBehavior === "handoff") {
       context.currentMainState = "S7";
@@ -64,11 +57,6 @@ export class OperatingContextManager {
       context.resumeTargetState = context.currentMainState === "S1" ? "S3" : context.currentMainState;
       context.primaryCounselingAction = "A5";
       context.nextBestCounselingMove = "Answer factual detour with known facts or caveats, then resume.";
-    } else if (!minimumComplete) {
-      context.currentMainState = "S1";
-      context.primaryCounselingAction = "A2";
-      context.minimumProfileRoute = routeFromProfile(profileSignals, flowDriving, text);
-      context.nextBestCounselingMove = "Collect academic result plus course and university direction status.";
     } else if (COMPARE.test(text)) {
       context.currentMainState = "S5";
       context.primaryCounselingAction = "A7";
@@ -80,7 +68,7 @@ export class OperatingContextManager {
       context.primaryCounselingAction = "A8";
       context.counselorResponseMode = "clarify_once";
       context.nextBestCounselingMove = "Clarify the possible correction or direction change before changing current truth.";
-    } else if (flowDriving.confirmedCounselingCoursePreference || flowDriving.confirmedCounselingUniversityPreference || flowDriving.confirmedCounselingPathwayPreference || CONFIRM_PREF.test(text)) {
+    } else if (hasConfirmedPreference || CONFIRM_PREF.test(text)) {
       context.currentMainState = "S6";
       context.primaryCounselingAction = "A9";
       context.preferenceStrength = "L4";
@@ -88,115 +76,84 @@ export class OperatingContextManager {
       context.summaryCheckpointStatus = "required";
       context.milestoneConfirmationStatus = "required";
       context.nextBestCounselingMove = "Confirm counseling preference without treating it as official action.";
-    } else if (DEFERRAL.test(text)) {
+    } else if (route.minimumProfileCompletion !== "minimum_complete") {
+      context.currentMainState = "S1";
+      context.primaryCounselingAction = "A2";
+      context.nextBestCounselingMove = "Collect academic result plus course and university direction status.";
+    } else if (DEFERRAL.test(text) || currentTruthProjection.decisionContext.currentDecisionBlockers.length) {
       context.currentMainState = "S8";
       context.primaryCounselingAction = "A10";
       context.counselorResponseMode = "decision_support";
       context.decisionSupportMode = "reflect_blocker";
       context.nextBestCounselingMove = "Support deferral or indecision.";
-    } else if (context.minimumProfileRoute === "university_exploration" || context.minimumProfileRoute === "recommendation_or_validation") {
+    } else if (["university_exploration", "recommendation_or_validation"].includes(context.minimumProfileRoute)) {
       context.currentMainState = "S4";
       context.primaryCounselingAction = "A6";
-      context.activeStudentDirection = activeDirection || inferDirection(text, context.activeStudentDirection);
       context.nextBestCounselingMove = "Give a directional recommendation or ask one university-fit question.";
     } else if (context.minimumProfileRoute === "course_exploration_within_university_context") {
       context.currentMainState = "S3";
       context.primaryCounselingAction = "A3";
       context.nextBestCounselingMove = "Explore course direction within the university context.";
-    } else if (minimumComplete) {
+    } else if (route.minimumProfileCompletion === "minimum_complete") {
       context.currentMainState = "S3";
       context.primaryCounselingAction = "A3";
       context.nextBestCounselingMove = "Explore interests and broad course or pathway fit.";
     }
 
-    return { context, profileSignals };
+    if (direction.pathwayDirectionStatus !== "unknown" && context.minimumProfileRoute === "recommendation_or_validation") {
+      context.minimumProfileRoute = "course_or_pathway_exploration";
+    }
+
+    return { context };
   }
 }
 
-function flowDrivingFromSemanticDelta(acceptedSemanticDelta) {
-  const deltas = acceptedSemanticDelta?.acceptedMemoryDeltas?.flowDrivingDeltas || {};
+function routeWithCurrentTurnStatus(currentTruth, text) {
+  const route = { ...currentTruth.route };
+  const hasAcademic = currentTruth.academic.academicResultStatus === "known";
+  const courseKnown = currentTruth.direction.courseDirectionStatus !== "unknown";
+  const universityKnown = currentTruth.direction.universityDirectionStatus !== "unknown";
+  const courseStatusKnown = courseKnown || NO_COURSE_DIRECTION.test(text);
+  const universityStatusKnown = universityKnown || NO_UNIVERSITY_DIRECTION.test(text);
+
+  if (hasAcademic && courseStatusKnown && universityStatusKnown) {
+    route.minimumProfileCompletion = "minimum_complete";
+    route.missingMinimumProfileFields = [];
+  }
+
+  if (!hasAcademic) route.minimumProfileRoute = "collect_academic_result";
+  else if (!courseKnown && !universityKnown) route.minimumProfileRoute = "course_or_pathway_exploration";
+  else if (courseKnown && !universityKnown) route.minimumProfileRoute = "university_exploration";
+  else if (!courseKnown && universityKnown) route.minimumProfileRoute = "course_exploration_within_university_context";
+
+  return route;
+}
+
+function currentTruthSummary(currentTruth) {
   return {
-    academicResult: deltas.academicResults?.[0],
-    coursesConsidering: deltas.coursesConsidering || [],
-    universitiesConsidering: deltas.universitiesConsidering || [],
-    pathwaysConsidering: deltas.pathwaysConsidering || [],
-    confirmedCounselingCoursePreference: deltas.confirmedCounselingCoursePreferences,
-    confirmedCounselingUniversityPreference: deltas.confirmedCounselingUniversityPreferences,
-    confirmedCounselingPathwayPreference: deltas.confirmedCounselingPathwayPreferences
+    academicResultStatus: currentTruth.academic.academicResultStatus,
+    courseDirectionStatus: currentTruth.direction.courseDirectionStatus,
+    universityDirectionStatus: currentTruth.direction.universityDirectionStatus,
+    pathwayDirectionStatus: currentTruth.direction.pathwayDirectionStatus,
+    minimumProfileCompletion: currentTruth.route.minimumProfileCompletion,
+    minimumProfileRoute: currentTruth.route.minimumProfileRoute,
+    preferenceStrength: currentTruth.preference.preferenceStrength,
+    recommendationReadiness: currentTruth.recommendationReadiness.level,
+    handoffRequired: currentTruth.handoffReadiness.handoffRequired
   };
 }
 
-function buildProfileSignals(previous = {}, flowDriving = {}, text = "") {
-  const academicResultKnown = Boolean(previous.academicResultKnown
-    || previous.hasAcademicResults
-    || flowDriving.academicResult
-    || RESULTS.test(text));
-  const courseDirectionStatus = directionStatus(
-    previous.courseDirectionStatus,
-    flowDriving.confirmedCounselingCoursePreference,
-    flowDriving.coursesConsidering,
-    COURSE.test(text),
-    NO_COURSE_DIRECTION.test(text),
-    {
-      confirmed: "confirmed_counseling_course_preference",
-      preferred: "preferred_course_exists",
-      considering: "considering_some_courses"
-    }
-  );
-  const universityDirectionStatus = directionStatus(
-    previous.universityDirectionStatus,
-    flowDriving.confirmedCounselingUniversityPreference,
-    flowDriving.universitiesConsidering,
-    UNIVERSITY.test(text),
-    NO_UNIVERSITY_DIRECTION.test(text),
-    {
-      confirmed: "confirmed_counseling_university_preference",
-      preferred: "preferred_university_exists",
-      considering: "considering_some_universities"
-    }
-  );
+function activeDirectionFromCurrentTruth(currentTruth) {
+  const preference = currentTruth.preference.confirmedCounselingPreference;
+  const course = preference?.courseOrProgram || currentTruth.direction.activeCourseDirections[0]?.value;
+  const university = preference?.university || currentTruth.direction.activeUniversityDirections[0]?.value;
+  const pathway = preference?.pathway || currentTruth.direction.activePathwayDirections[0]?.value;
+  if (!course && !university && !pathway) return undefined;
   return {
-    academicResultKnown,
-    academicResultStatus: academicResultKnown ? "known" : "unknown",
-    courseDirectionStatusKnown: Boolean(previous.courseDirectionStatusKnown
-      || courseDirectionStatus !== undefined),
-    universityDirectionStatusKnown: Boolean(previous.universityDirectionStatusKnown
-      || universityDirectionStatus !== undefined),
-    courseDirectionStatus: courseDirectionStatus || "unknown",
-    universityDirectionStatus: universityDirectionStatus || "unknown",
-    pathwayDirectionKnown: Boolean((flowDriving.pathwaysConsidering || []).length || PATHWAY.test(text))
+    ...(course ? { courseOrProgram: course } : {}),
+    ...(university ? { university } : {}),
+    ...(pathway ? { pathway } : {})
   };
-}
-
-function directionStatus(previous, confirmed, considering = [], textHasDirection, textSaysUnknown, labels) {
-  if (confirmed) return labels.confirmed;
-  if (considering.some((signal) => signal.status === "preferred")) return labels.preferred;
-  if (textSaysUnknown) return "unknown";
-  if (considering.length || textHasDirection) return labels.considering;
-  return previous;
-}
-
-function routeFromProfile(profile, flowDriving = {}, text = "") {
-  if (!profile.academicResultKnown) return "collect_academic_result";
-  const courseKnown = isKnownDirection(profile.courseDirectionStatus);
-  const universityKnown = isKnownDirection(profile.universityDirectionStatus);
-  if (COMPARE.test(text)) return "comparison_or_shortlist";
-  if (profile.pathwayDirectionKnown || (flowDriving.pathwaysConsidering || []).length) return "course_or_pathway_exploration";
-  if (!courseKnown && !universityKnown) return "course_or_pathway_exploration";
-  if (courseKnown && !universityKnown) return "university_exploration";
-  if (!courseKnown && universityKnown) return "course_exploration_within_university_context";
-  return "recommendation_or_validation";
-}
-
-function hasUsableDirection(profile, flowDriving = {}) {
-  return isKnownDirection(profile.courseDirectionStatus)
-    || isKnownDirection(profile.universityDirectionStatus)
-    || profile.pathwayDirectionKnown
-    || Boolean((flowDriving.pathwaysConsidering || []).length);
-}
-
-function isKnownDirection(status) {
-  return Boolean(status && status !== "unknown");
 }
 
 function postureFromContext(route, text = "") {
@@ -228,38 +185,4 @@ function decisionSupportMode(text = "", primaryAction) {
 
 function hasKnowledgeNeed(runtimeSignals) {
   return runtimeSignals.some((signal) => signal.kind === "knowledge_need");
-}
-
-function activeDirectionFromDeltas(flowDriving, text, previous = {}) {
-  const course = deltaValue(flowDriving.confirmedCounselingCoursePreference)
-    || deltaValue(flowDriving.coursesConsidering?.find((signal) => signal.status === "preferred"))
-    || deltaValue(flowDriving.coursesConsidering?.[0]);
-  const university = deltaValue(flowDriving.confirmedCounselingUniversityPreference)
-    || deltaValue(flowDriving.universitiesConsidering?.find((signal) => signal.status === "preferred"))
-    || deltaValue(flowDriving.universitiesConsidering?.[0]);
-  const pathway = deltaValue(flowDriving.confirmedCounselingPathwayPreference)
-    || deltaValue(flowDriving.pathwaysConsidering?.find((signal) => signal.status === "preferred"))
-    || deltaValue(flowDriving.pathwaysConsidering?.[0]);
-
-  if (!course && !university && !pathway) return COURSE.test(text) ? inferDirection(text, previous) : undefined;
-  return {
-    ...previous,
-    ...(course ? { courseOrProgram: course } : {}),
-    ...(university ? { university } : {}),
-    ...(pathway ? { pathway } : {})
-  };
-}
-
-function deltaValue(delta) {
-  return delta?.value || delta?.courseOrProgram || delta?.university || delta?.pathway;
-}
-
-function inferDirection(text, previous = {}) {
-  const lower = text.toLowerCase();
-  const courseOrProgram = ["psychology", "business", "computer science", "it", "design", "engineering", "accounting"]
-    .find((course) => lower.includes(course));
-  return {
-    ...previous,
-    ...(courseOrProgram ? { courseOrProgram } : {})
-  };
 }

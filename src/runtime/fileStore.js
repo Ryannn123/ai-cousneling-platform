@@ -6,6 +6,7 @@ export const ROOT = process.cwd();
 export const DATA_DIR = path.join(ROOT, "data", "runtime");
 export const CONVERSATION_DIR = path.join(DATA_DIR, "conversations");
 export const AUDIT_PATH = path.join(DATA_DIR, "audit.ndjson");
+export const MEMORY_EVENTS_PATH = path.join(DATA_DIR, "memory-events.ndjson");
 
 export async function ensureRuntimeDirs() {
   await mkdir(CONVERSATION_DIR, { recursive: true });
@@ -30,11 +31,15 @@ export async function appendNdjson(filePath, event) {
   await appendFile(filePath, `${JSON.stringify(event)}\n`, "utf8");
 }
 
+export async function readNdjson(filePath) {
+  if (!existsSync(filePath)) return [];
+  const raw = (await readFile(filePath, "utf8")).trim();
+  if (!raw) return [];
+  return raw.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+}
+
 export async function readAuditEvents(conversationId, limit = 50) {
-  if (!existsSync(AUDIT_PATH)) return [];
-  const lines = (await readFile(AUDIT_PATH, "utf8")).trim().split(/\r?\n/).filter(Boolean);
-  return lines
-    .map((line) => JSON.parse(line))
+  return (await readNdjson(AUDIT_PATH))
     .filter((event) => event.conversationId === conversationId)
     .slice(-limit);
 }

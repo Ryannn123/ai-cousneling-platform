@@ -12,6 +12,11 @@ import { AIExecutionClient } from "../src/runtime/aiExecutionClient.js";
 import { AISemanticDeltaExtractor } from "../src/runtime/aiSemanticDeltaExtractor.js";
 import { parseLlmSemanticDelta } from "../src/runtime/semanticDeltaLayer.js";
 import { SemanticDeltaValidator } from "../src/runtime/semanticDeltaValidator.js";
+import { AuditEventStore } from "../src/runtime/auditEventStore.js";
+import { CurrentTruthProjector } from "../src/runtime/currentTruthProjector.js";
+import { MemoryEventStore } from "../src/runtime/memoryEventStore.js";
+import { MemoryEventValidator } from "../src/runtime/memoryEventValidator.js";
+import { MemoryStateService } from "../src/runtime/memoryStateService.js";
 
 function flowDrivingDeltas(result) {
   return result.acceptedSemanticDelta.acceptedMemoryDeltas.flowDrivingDeltas;
@@ -49,6 +54,31 @@ function testExecutionClient() {
       return mockExecution(executionContext);
     }
   };
+}
+
+async function phase5MemoryHarness() {
+  const dir = await mkdtemp(path.join(tmpdir(), "phase5-memory-"));
+  const memoryEventStore = new MemoryEventStore(path.join(dir, "memory-events.ndjson"));
+  const auditEventStore = new AuditEventStore(path.join(dir, "audit.ndjson"));
+  return {
+    service: new MemoryStateService({ memoryEventStore, auditEventStore }),
+    memoryEventStore,
+    auditEventStore
+  };
+}
+
+function acceptedDeltaFromRaw(rawSemanticDelta, ids = {}) {
+  return new SemanticDeltaValidator().validate({
+    rawSemanticDelta,
+    fastBoundarySignals: [],
+    turnInput: {
+      conversationId: ids.conversationId || "conversation-1",
+      turnId: ids.turnId || "turn-1",
+      messageId: ids.messageId || "message-1",
+      studentMessage: ids.studentMessage || "Psychology sounds interesting."
+    },
+    extractor: { provider: "mock", model: "test" }
+  });
 }
 
 const TEST_COURSES = ["psychology", "business", "computer science", "it", "design", "engineering", "accounting"];
@@ -930,6 +960,160 @@ test("phase 4 invalid semantic delta evidence falls back safely", async () => {
   assert.ok(result.acceptedSemanticDelta.rejectedCandidates.some((candidate) => candidate.reason === "missing_evidence"));
 });
 
+test("phase 5 commits accepted semantic deltas into durable memory and current truth", async () => {
+  const { service, memoryEventStore } = await phase5MemoryHarness();
+  const acceptedSemanticDelta = acceptedDeltaFromRaw(conciseSemanticDeltaFixture(), {
+    conversationId: "student-phase5-1",
+    turnId: "turn-phase5-1",
+    messageId: "message-phase5-1"
+  });
+
+  const before = await service.deriveCurrentTruth({ studentId: "student-phase5-1" });
+  const commit = await service.commitPreResponseStudentMemory({
+    studentId: "student-phase5-1",
+    acceptedSemanticDelta,
+    currentTruthBeforeCommit: before
+  });
+  const currentTruth = await service.deriveCurrentTruth({ studentId: "student-phase5-1" });
+  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-1" });
+
+  assert.equal(commit.appendedMemoryEventIds.length, 2);
+  assert.equal(events.every((event) => event.officialTruthBoundary.isOfficialTruth === false), true);
+  assert.equal(currentTruth.direction.courseDirectionStatus, "considering_some_courses");
+  assert.equal(currentTruth.recommendationReadiness.basis.hasEnoughFitSignalsForHighQualityRecommendation, true);
+});
+
+test("phase 5 runtime-only signals do not become durable memory", async () => {
+  const { service, memoryEventStore } = await phase5MemoryHarness();
+  const acceptedSemanticDelta = acceptedDeltaFromRaw({
+    memoryDeltaCandidates: {
+      flowDrivingDeltas: {
+        academicResults: [],
+        coursesConsidering: [],
+        confirmedCounselingCoursePreferences: null,
+        universitiesConsidering: [],
+        confirmedCounselingUniversityPreferences: null,
+        pathwaysConsidering: [],
+        confirmedCounselingPathwayPreferences: null
+      },
+      qualityEnhancingDeltas: []
+    },
+    runtimeOnlySignalCandidates: [{
+      kind: "student_posture",
+      posture: "lost_or_confused",
+      confidence: "high",
+      evidence: [{ quote: "I'm confused" }]
+    }]
+  }, {
+    conversationId: "student-phase5-runtime-only",
+    turnId: "turn-phase5-runtime-only",
+    messageId: "message-phase5-runtime-only",
+    studentMessage: "I'm confused."
+  });
+
+  const commit = await service.commitPreResponseStudentMemory({
+    studentId: "student-phase5-runtime-only",
+    acceptedSemanticDelta,
+    currentTruthBeforeCommit: await service.deriveCurrentTruth({ studentId: "student-phase5-runtime-only" })
+  });
+  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-runtime-only" });
+
+  assert.deepEqual(commit.appendedMemoryEventIds, []);
+  assert.deepEqual(events, []);
+});
+
+test("phase 5 rejects official-truth durable memory drafts", () => {
+  const result = new MemoryEventValidator().validate({
+    draft: {
+      studentId: "student-phase5-official",
+      category: "handoff_readiness",
+      operation: "add_new",
+      payload: { value: "registration completed" },
+      confidence: "high",
+      evidence: [{ quote: "registration completed", source: "student_message" }],
+      source: {
+        acceptedSemanticDeltaId: "semantic-1",
+        acceptedDeltaId: "delta-1",
+        conversationId: "student-phase5-official",
+        turnId: "turn-1",
+        messageId: "message-1"
+      },
+      merge: { projectionIntent: "may_update_current_truth" },
+      officialTruthBoundary: { isOfficialTruth: false }
+    }
+  });
+
+  assert.equal(result.status, "reject");
+  assert.equal(result.invariantChecks.officialTruthSafe, false);
+  assert.ok(result.errors.includes("official_truth_not_memory"));
+});
+
+test("phase 5 duplicate idempotency keys do not duplicate memory events", async () => {
+  const { service, memoryEventStore } = await phase5MemoryHarness();
+  const acceptedSemanticDelta = acceptedDeltaFromRaw(semanticDeltaFixture(), {
+    conversationId: "student-phase5-duplicate",
+    turnId: "turn-phase5-duplicate",
+    messageId: "message-phase5-duplicate"
+  });
+  const before = await service.deriveCurrentTruth({ studentId: "student-phase5-duplicate" });
+
+  const first = await service.commitPreResponseStudentMemory({
+    studentId: "student-phase5-duplicate",
+    acceptedSemanticDelta,
+    currentTruthBeforeCommit: before
+  });
+  const second = await service.commitPreResponseStudentMemory({
+    studentId: "student-phase5-duplicate",
+    acceptedSemanticDelta,
+    currentTruthBeforeCommit: before
+  });
+  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-duplicate" });
+
+  assert.equal(first.appendedMemoryEventIds.length, 1);
+  assert.equal(second.ignoredDuplicateEventIds.length, 1);
+  assert.equal(events.length, 1);
+});
+
+test("phase 5 current truth projection is deterministic from memory events", () => {
+  const projector = new CurrentTruthProjector();
+  const events = [{
+    eventId: "event-1",
+    studentId: "student-phase5-projector",
+    category: "academic",
+    operation: "add_new",
+    payload: { rawText: "5 credits" },
+    confidence: "high",
+    officialTruthBoundary: { isOfficialTruth: false },
+    createdAt: "2026-07-02T00:00:00.000Z"
+  }, {
+    eventId: "event-2",
+    studentId: "student-phase5-projector",
+    category: "course_direction",
+    operation: "add_new",
+    payload: { value: "Psychology", status: "preferred" },
+    confidence: "high",
+    officialTruthBoundary: { isOfficialTruth: false },
+    createdAt: "2026-07-02T00:00:01.000Z"
+  }, {
+    eventId: "event-3",
+    studentId: "student-phase5-projector",
+    category: "handoff_readiness",
+    operation: "add_new",
+    payload: { type: "handoff_required", value: { triggerType: "H1", reason: "Student is asking to apply." } },
+    confidence: "high",
+    officialTruthBoundary: { isOfficialTruth: false },
+    createdAt: "2026-07-02T00:00:02.000Z"
+  }];
+
+  const currentTruth = projector.project({ studentId: "student-phase5-projector", events });
+
+  assert.equal(currentTruth.academic.academicResultStatus, "known");
+  assert.equal(currentTruth.direction.courseDirectionStatus, "preferred_course_exists");
+  assert.equal(currentTruth.preference.preferenceStrength, "L5");
+  assert.equal(currentTruth.handoffReadiness.handoffRequired, true);
+  assert.equal(currentTruth.handoffReadiness.officialTruthBoundary.applicationSubmitted, false);
+});
+
 test("draft skills are rejected and approved skills are loaded with hashes", async () => {
   const skillsDir = await mkdtemp(path.join(tmpdir(), "counseling-skills-"));
   await writeSkill(skillsDir, "approved-skill", "approved");
@@ -967,7 +1151,7 @@ test("phase 12 scenario reaches recommendation, comparison, preference, handoff,
     conversationId: conversation.conversationId,
     studentMessage: "My SPM results are good, I prefer budget value universities in Kuala Lumpur, and I am interested in Psychology."
   });
-  assert.equal(recommendation.operatingContext.recommendationReadiness, "R2");
+  assert.equal(recommendation.operatingContext.recommendationReadiness, "R3");
   assert.equal(recommendation.skillSelection.selectedRuntimeSkill.name, "directional-recommendation");
   assert.equal(recommendation.validationResult.acceptedOutputs.recommendationOutputs[0].confidence, "medium");
 
@@ -1126,6 +1310,56 @@ test("invalid AI official-action output is blocked before commit", async () => {
   assert.equal(result.validationResult.status, "safe_fallback");
   assert.match(result.finalResponse, /cannot complete application/i);
   assert.equal(result.validationResult.blockedOutputs[0].reason, "official_action_output_not_commit_eligible");
+  assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
+});
+
+test("phase 5 response retry does not duplicate pre-response memory", async () => {
+  let calls = 0;
+  const app = testApp({
+    aiExecutionClient: {
+      async execute(executionContext) {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            response: {
+              studentMessage: "Your registration completed successfully.",
+              responseIntent: "answer"
+            },
+            proposedContextUpdate: {},
+            proposedOutputs: {
+              memoryOutputs: [{
+                type: "registration_completed",
+                value: { program: "Psychology" },
+                confidence: "high",
+                evidence: "test"
+              }],
+              recommendationOutputs: []
+            },
+            validationFlags: {
+              needsClarification: false,
+              boundarySensitive: false,
+              officialActionRisk: true,
+              memoryWriteRequiresValidation: true,
+              knowledgeUsed: false,
+              knowledgeUncertain: false
+            }
+          };
+        }
+        return mockExecution(executionContext);
+      }
+    }
+  });
+  const conversation = await app.createConversation();
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "Psychology sounds interesting."
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(result.validationResult.responseRetry.attempted, true);
+  assert.equal(result.preResponseMemoryCommitResult.appendedMemoryEventIds.length, 1);
+  assert.equal(result.preResponseMemoryCommitResult.ignoredDuplicateEventIds.length, 0);
+  assert.equal(result.currentTruth.direction.activeCourseDirections.length, 1);
   assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
 });
 

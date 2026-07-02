@@ -1,13 +1,14 @@
-import crypto from "node:crypto";
 import { appendNdjson, AUDIT_PATH } from "./fileStore.js";
 
-export async function writeAuditEvent({ conversationId, studentMessage, boundaryResult, operatingContextBefore, operatingContextAfter, skillSelection, aiExecutionResult, validationResult, commitResult, semanticDeltaAudit }) {
+export async function writeAuditEvent({ conversationId, studentMessage, boundaryResult, operatingContextBefore, operatingContextAfter, skillSelection, aiExecutionResult, validationResult, commitResult, semanticDeltaAudit, memoryStateAudit }) {
   const event = {
+    eventType: "turn_audit",
     conversationId,
-    turnId: semanticDeltaAudit?.acceptedSemanticDelta?.platformMetadata?.turnId || crypto.randomUUID(),
+    turnId: semanticDeltaAudit?.acceptedSemanticDelta?.platformMetadata?.turnId,
     timestamp: new Date().toISOString(),
     studentMessage,
     semanticDeltaAudit,
+    memoryStateAudit,
     boundaryResult,
     operatingContextBefore,
     operatingContextAfter,
