@@ -1,28 +1,29 @@
 ---
 name: preference-confirmation
 description: Confirm counseling preference while blocking official-action interpretation.
-version: 1.2.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
 applies_to_actions:
-  - A8
-  - A9
-  - A10
+  - clarify_ambiguity
+  - confirm_counseling_preference
+  - support_decision
 applies_to_zones:
   - green
   - yellow
-applies_to_profile_completeness:
-  - incomplete
-  - minimum_complete
-  - rich_profile
-applies_to_minimum_profile_routes:
-  - collect_academic_result
-  - course_or_pathway_exploration
+applies_to_active_routes:
+  - initial_route_selection
+  - course_exploration
   - university_exploration
   - course_exploration_within_university_context
-  - recommendation_or_validation
-  - comparison_or_shortlist
+  - pathway_exploration
+  - combined_option_validation
+applies_to_progress_states:
+  - decision_support
+  - confirmed_preference
+  - deferral_indecision
+  - exploration
 student_postures_supported:
   - decision_ready
   - validation_seeking
@@ -40,6 +41,7 @@ allowed_memory_outputs:
   - confirmed_counseling_preference
   - expressed_preference
   - deferral_signal
+  - exploration_prompted
   - ai_core_fallback_used
 forbidden_memory_outputs:
   - application_submitted

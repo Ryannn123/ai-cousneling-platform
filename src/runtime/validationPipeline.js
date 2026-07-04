@@ -1,10 +1,20 @@
 import { OFFICIAL_ACTION_OUTPUTS } from "./constants.js";
+import { RouteOutcomeValidator } from "./routeOutcomeValidator.js";
+import { RouteResponseAlignmentValidator } from "./routeResponseAlignmentValidator.js";
 
 const OFFICIAL_COMPLETION_LANGUAGE = /\b(application submitted|registered you|registration completed|seat reserved|payment confirmed|enrollment confirmed|updated crm)\b/i;
 const OLD_MINIMUM_PROFILE_LANGUAGE = /\b(prestige\/ranking|ranking.*budget|budget.*location|preferred study location)\b/i;
 const NON_OFFICIAL_LANGUAGE = /\bnot (an|official)|does not submit|does not register|not application|not.*registration|not.*payment|not.*seat|not.*crm/i;
 
 export class ValidationPipeline {
+  constructor({
+    routeOutcomeValidator = new RouteOutcomeValidator(),
+    routeResponseAlignmentValidator = new RouteResponseAlignmentValidator()
+  } = {}) {
+    this.routeOutcomeValidator = routeOutcomeValidator;
+    this.routeResponseAlignmentValidator = routeResponseAlignmentValidator;
+  }
+
   validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedSemanticDelta }) {
     const validationEvents = [];
     const blockedOutputs = [];
@@ -32,7 +42,7 @@ export class ValidationPipeline {
       });
     }
 
-    if (operatingContext.primaryCounselingAction === "A2" && OLD_MINIMUM_PROFILE_LANGUAGE.test(finalResponse)) {
+    if (["A2", "orient_initial_route"].includes(operatingContext.primaryCounselingAction) && OLD_MINIMUM_PROFILE_LANGUAGE.test(finalResponse)) {
       finalResponse = "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.";
       status = "safe_fallback";
       validationEvents.push({
@@ -52,13 +62,11 @@ export class ValidationPipeline {
       });
     }
 
-    if (["reassuring_orientation", "route_explanation", "decision_support"].includes(operatingContext.counselorResponseMode)
-      && questionCount(finalResponse) > 1) {
-      validationEvents.push({
-        type: "too_many_questions_detected",
-        severity: "warning",
-        message: "Counselor-like flow should ask only one purposeful next question."
-      });
+    const routeResponseAlignment = this.routeResponseAlignmentValidator.validate({ finalResponse, operatingContext });
+    validationEvents.push(...routeResponseAlignment.validationEvents);
+    if (routeResponseAlignment.status === "reject") {
+      finalResponse = "Let me keep this focused on the current counseling route. We can continue safely with one next step without treating the route as complete yet.";
+      status = "safe_fallback";
     }
 
     const allowedTypes = new Set(skillSelection.allowedMemoryOutputTypes || []);
@@ -105,6 +113,9 @@ export class ValidationPipeline {
       }
       : undefined;
 
+    const routeOutcomeValidation = this.routeOutcomeValidator.validate({ operatingContext, acceptedSemanticDelta, boundaryResult });
+    validationEvents.push(...routeOutcomeValidation.validationEvents);
+
     if (blockedOutputs.length && status === "accepted") status = "blocked";
     if (boundaryResult.allowedNextBehavior === "clarify") status = "clarify";
 
@@ -115,21 +126,23 @@ export class ValidationPipeline {
       acceptedOutputs: {
         memoryOutputs: acceptedMemoryOutputs,
         recommendationOutputs: acceptedRecommendationOutputs,
-        handoffOutput: acceptedHandoffOutput
+        handoffOutput: acceptedHandoffOutput,
+        routeOutcomeOutput: routeOutcomeValidation.routeOutcomeOutput
       },
       blockedOutputs,
-      validationEvents
+      validationEvents,
+      routeOutcomeValidation
     };
   }
 }
 
-function questionCount(text = "") {
-  return (text.match(/\?/g) || []).length;
-}
-
 function supportsConfirmedPreference(acceptedSemanticDelta) {
   const flowDriving = acceptedSemanticDelta?.acceptedMemoryDeltas?.flowDrivingDeltas;
-  return Boolean(flowDriving?.confirmedCounselingCoursePreferences
-    || flowDriving?.confirmedCounselingUniversityPreferences
-    || flowDriving?.confirmedCounselingPathwayPreferences);
+  return Boolean(nonEmpty(flowDriving?.confirmedCounselingCoursePreferences)
+    || nonEmpty(flowDriving?.confirmedCounselingUniversityPreferences)
+    || nonEmpty(flowDriving?.confirmedCounselingPathwayPreferences));
+}
+
+function nonEmpty(value) {
+  return Array.isArray(value) ? value.length > 0 : Boolean(value);
 }

@@ -1,15 +1,17 @@
 ---
 name: factual-detour-answering
 description: Answer factual detours using verified prototype knowledge or caveats.
-version: 1.0.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
 applies_to_actions:
-  - A5
+  - answer_detour
 applies_to_zones:
   - green
   - yellow
+applies_to_progress_states:
+  - detour_resume
 allowed_memory_outputs:
   - factual_detour_answered
   - knowledge_gap

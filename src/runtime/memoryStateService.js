@@ -91,9 +91,10 @@ export class MemoryStateService {
 
   async writeMemoryAudit({ studentId, acceptedSemanticDelta, decision, validation, append, status }) {
     const meta = acceptedSemanticDelta?.platformMetadata || {};
+    const isRouteOutcome = decision.category === "route_outcome";
     const audit = await this.auditEventStore.appendAuditEvent({
       event: {
-        eventType: "memory_ingestion",
+        eventType: isRouteOutcome ? routeOutcomeMemoryEventType(status) : "memory_ingestion",
         severity: ["appended", "already_exists", "audit_only"].includes(status) ? "info" : "warning",
         studentId,
         conversationId: meta.conversationId,
@@ -115,6 +116,12 @@ export class MemoryStateService {
     });
     return audit.auditEventId;
   }
+}
+
+function routeOutcomeMemoryEventType(status) {
+  if (status === "appended") return "route_outcome_memory_accepted";
+  if (status === "already_exists") return "route_outcome_memory_duplicate_suppressed";
+  return "route_outcome_memory_rejected";
 }
 
 function emptyCommitResult() {

@@ -16,15 +16,25 @@ const ACTION_TO_SKILL = {
   A8: "preference-confirmation",
   A9: "preference-confirmation",
   A10: "preference-confirmation",
-  A12: "ready-to-register-handoff"
+  A12: "ready-to-register-handoff",
+  orient_initial_route: "initial-route-orientation",
+  explore_route: "interest-exploration",
+  answer_detour: "factual-detour-answering",
+  recommend_directionally: "directional-recommendation",
+  compare_shortlist: "shortlist-comparison",
+  clarify_ambiguity: "preference-confirmation",
+  confirm_counseling_preference: "preference-confirmation",
+  support_decision: "deferral-indecision",
+  prepare_handoff: "ready-to-register-handoff"
 };
 
-const STATE_TO_PLAYBOOK = {
-  S3: "exploration-first-playbook",
-  S4: "exploration-first-playbook",
-  S5: "comparison-shortlist-playbook",
-  S6: "confirmed-preference-to-handoff-playbook",
-  S7: "confirmed-preference-to-handoff-playbook"
+const PROGRESS_TO_PLAYBOOK = {
+  exploration: "exploration-first-playbook",
+  recommendation_ready: "exploration-first-playbook",
+  recommendation_presented: "exploration-first-playbook",
+  comparison: "comparison-shortlist-playbook",
+  confirmed_preference: "confirmed-preference-to-handoff-playbook",
+  handoff: "confirmed-preference-to-handoff-playbook"
 };
 
 export class SkillControlService {
@@ -78,7 +88,8 @@ export class SkillControlService {
       ? inventory.loaded.find((skill) => skill.ref.name === selectedRuntimeSkill.name)
       : undefined;
 
-    const playbookName = STATE_TO_PLAYBOOK[operatingContext.currentMainState];
+    const playbookName = PROGRESS_TO_PLAYBOOK[operatingContext.activeRouteEpisode?.progressState]
+      || PROGRESS_TO_PLAYBOOK[operatingContext.legacyMigration?.legacyMainState];
     const selectedPlaybook = playbookName
       ? findCompatible(inventory.loaded, playbookName, "playbook", operatingContext, rejectedCandidates)
       : undefined;
@@ -118,24 +129,38 @@ function parseSkillMarkdown(raw, sourcePath) {
 }
 
 function parseYamlSubset(text) {
-  // ponytail: SKILL.md frontmatter only needs scalars and string arrays for this prototype.
+  // ponytail: SKILL.md frontmatter only needs scalars, one-level maps, and string arrays for this prototype.
   const result = {};
   let currentKey = null;
+  let currentParent = null;
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trimEnd();
     if (!line.trim()) continue;
+    const indent = line.match(/^\s*/)[0].length;
     if (/^\s+- /.test(line) && currentKey) {
-      result[currentKey].push(line.replace(/^\s+- /, "").trim());
+      const target = currentParent ? result[currentParent][currentKey] : result[currentKey];
+      target.push(line.replace(/^\s+- /, "").trim());
       continue;
     }
-    const keyValue = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
+    const keyValue = line.trim().match(/^([A-Za-z0-9_]+):\s*(.*)$/);
     if (!keyValue) continue;
     const [, key, value] = keyValue;
+    if (indent === 0) currentParent = null;
+    if (indent > 0 && !currentParent && currentKey && Array.isArray(result[currentKey])) {
+      currentParent = currentKey;
+      result[currentParent] = {};
+    }
     if (value === "") {
-      result[key] = [];
-      currentKey = key;
+      if (indent > 0 && currentParent) {
+        result[currentParent][key] = [];
+        currentKey = key;
+      } else {
+        result[key] = [];
+        currentKey = key;
+      }
     } else {
-      result[key] = value.trim();
+      if (indent > 0 && currentParent) result[currentParent][key] = value.trim();
+      else result[key] = value.trim();
       currentKey = null;
     }
   }
@@ -166,8 +191,14 @@ function findCompatible(loaded, name, artifactType, context, rejectedCandidates,
 }
 
 function compatibilityFailure(metadata, context) {
-  if (Array.isArray(metadata.applies_to_states) && metadata.applies_to_states.length && !metadata.applies_to_states.includes(context.currentMainState)) {
-    return `state_${context.currentMainState}_not_allowed`;
+  const route = context.activeRouteEpisode;
+  const activeRoutes = metadata.route_episode?.applies_to_active_routes || metadata.applies_to_active_routes || legacyRoutesToActiveRoutes(metadata.applies_to_minimum_profile_routes);
+  if (Array.isArray(activeRoutes) && activeRoutes.length && route?.routeType && !activeRoutes.includes(route.routeType)) {
+    return `route_${route.routeType}_not_allowed`;
+  }
+  const progressStates = metadata.route_episode?.applies_to_progress_states || metadata.applies_to_progress_states || legacyStatesToProgressStates(metadata.applies_to_states);
+  if (Array.isArray(progressStates) && progressStates.length && route?.progressState && !progressStates.includes(route.progressState)) {
+    return `progress_${route.progressState}_not_allowed`;
   }
   if (Array.isArray(metadata.applies_to_actions) && metadata.applies_to_actions.length && !metadata.applies_to_actions.includes(context.primaryCounselingAction)) {
     return `action_${context.primaryCounselingAction}_not_allowed`;
@@ -182,13 +213,8 @@ function compatibilityFailure(metadata, context) {
   }
   if (Array.isArray(metadata.applies_to_profile_completeness)
     && metadata.applies_to_profile_completeness.length
-    && !metadata.applies_to_profile_completeness.includes(context.profileCompleteness)) {
-    return `profile_completeness_${context.profileCompleteness}_not_allowed`;
-  }
-  if (Array.isArray(metadata.applies_to_minimum_profile_routes)
-    && metadata.applies_to_minimum_profile_routes.length
-    && !metadata.applies_to_minimum_profile_routes.includes(context.minimumProfileRoute)) {
-    return `route_${context.minimumProfileRoute}_not_allowed`;
+    && !metadata.applies_to_profile_completeness.includes(context.currentTruth?.routeReadiness || context.profileCompleteness)) {
+    return `profile_completeness_${context.currentTruth?.routeReadiness || context.profileCompleteness}_not_allowed`;
   }
   if (Array.isArray(metadata.student_postures_supported)
     && metadata.student_postures_supported.length
@@ -203,6 +229,35 @@ function compatibilityFailure(metadata, context) {
     return `response_mode_${context.counselorResponseMode}_not_allowed`;
   }
   return null;
+}
+
+function legacyRoutesToActiveRoutes(routes) {
+  if (!Array.isArray(routes)) return undefined;
+  const mapped = routes.flatMap((route) => ({
+    collect_academic_result: ["initial_route_selection"],
+    course_or_pathway_exploration: ["course_exploration", "pathway_exploration"],
+    university_exploration: ["university_exploration"],
+    course_exploration_within_university_context: ["course_exploration_within_university_context"],
+    recommendation_or_validation: ["combined_option_validation", "university_exploration"],
+    comparison_or_shortlist: ["course_exploration", "university_exploration", "pathway_exploration", "combined_option_validation"],
+    handoff_boundary_check: ["handoff_preparation"]
+  }[route] || []));
+  return Array.from(new Set(mapped));
+}
+
+function legacyStatesToProgressStates(states) {
+  if (!Array.isArray(states)) return undefined;
+  const mapped = states.flatMap((state) => ({
+    S1: ["opening"],
+    S3: ["exploration"],
+    S4: ["recommendation_ready"],
+    S5: ["comparison"],
+    S6: ["confirmed_preference"],
+    S7: ["handoff"],
+    S8: ["decision_support", "deferral_indecision"],
+    S9: ["detour_resume"]
+  }[state] || []));
+  return Array.from(new Set(mapped));
 }
 
 function fallbackRef(name, artifactType) {

@@ -8,8 +8,10 @@ const els = {
   input: document.querySelector("#studentMessage"),
   newConversation: document.querySelector("#newConversation"),
   zoneBadge: document.querySelector("#zoneBadge"),
-  stateValue: document.querySelector("#stateValue"),
-  overlayValue: document.querySelector("#overlayValue"),
+  progressValue: document.querySelector("#progressValue"),
+  transitionValue: document.querySelector("#transitionValue"),
+  outcomeValue: document.querySelector("#outcomeValue"),
+  detourValue: document.querySelector("#detourValue"),
   actionValue: document.querySelector("#actionValue"),
   routeValue: document.querySelector("#routeValue"),
   postureValue: document.querySelector("#postureValue"),
@@ -103,12 +105,15 @@ function renderDebug(result) {
 }
 
 function renderContext(context) {
+  const route = context.activeRouteEpisode || {};
   els.zoneBadge.textContent = context.currentZone;
   els.zoneBadge.className = `badge ${context.currentZone}`;
-  els.stateValue.textContent = label(context.currentMainState, labels.states);
-  els.overlayValue.textContent = context.overlayState ? label(context.overlayState, labels.states) : "none";
+  els.routeValue.textContent = label(route.routeType || "none", labels.routes);
+  els.progressValue.textContent = label(route.progressState || "none", labels.progressStates);
+  els.transitionValue.textContent = route.transitionDecision?.decision || "none";
+  els.outcomeValue.textContent = label(route.routeOutcomeCandidate || "none", labels.routeOutcomes);
+  els.detourValue.textContent = route.detourOverlay?.detourKind || "none";
   els.actionValue.textContent = label(context.primaryCounselingAction, labels.actions);
-  els.routeValue.textContent = context.minimumProfileRoute || "none";
   els.postureValue.textContent = context.studentPosture || "none";
   els.responseModeValue.textContent = context.counselorResponseMode || "none";
   els.readinessValue.textContent = label(context.recommendationReadiness, labels.readiness);

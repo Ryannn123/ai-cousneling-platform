@@ -22,11 +22,13 @@ export async function commitTurn({ conversationId, studentMessage, previousState
   state.updatedAt = now;
   state.operatingContext = committedContext;
   state.currentTruth = currentTruth;
+  state.routeOutcomeOutputs ||= [];
   state.messages.push({ role: "student", content: studentMessage, timestamp: now });
   state.messages.push({ role: "assistant", content: validationResult.finalResponse, timestamp: now });
 
   const memoryIds = appendOutputs(state.memoryOutputs, validationResult.acceptedOutputs.memoryOutputs, now);
   const recommendationIds = appendOutputs(state.recommendationOutputs, validationResult.acceptedOutputs.recommendationOutputs, now);
+  const routeOutcomeIds = appendOutputs(state.routeOutcomeOutputs, arrayOf(validationResult.acceptedOutputs.routeOutcomeOutput), now);
 
   if (validationResult.acceptedOutputs.handoffOutput?.required) {
     state.handoff = { ...validationResult.acceptedOutputs.handoffOutput, timestamp: now };
@@ -39,6 +41,7 @@ export async function commitTurn({ conversationId, studentMessage, previousState
     committedContext,
     committedMemoryOutputIds: memoryIds,
     committedRecommendationOutputIds: recommendationIds,
+    committedRouteOutcomeOutputIds: routeOutcomeIds,
     handoffPrepared: Boolean(state.handoff),
     blockedOutputCount: validationResult.blockedOutputs.length
   };
@@ -54,6 +57,7 @@ function newConversationState(conversationId, now) {
     messages: [],
     memoryOutputs: [],
     recommendationOutputs: [],
+    routeOutcomeOutputs: [],
     handoff: null,
     blockedOutputs: []
   };
@@ -65,4 +69,8 @@ function appendOutputs(target, outputs, timestamp) {
     target.push({ id, ...output, timestamp });
     return id;
   });
+}
+
+function arrayOf(value) {
+  return value ? [value] : [];
 }

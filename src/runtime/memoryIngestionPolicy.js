@@ -96,6 +96,15 @@ export class MemoryIngestionPolicy {
         }
       }));
     }
+    if (validationResult?.acceptedOutputs?.routeOutcomeOutput) {
+      decisions.push(this.aiOutputDecision({
+        studentId,
+        acceptedSemanticDelta,
+        selectedSkillContext,
+        acceptedDeltaId: "route.outcomeOutput",
+        output: validationResult.acceptedOutputs.routeOutcomeOutput
+      }));
+    }
     return decisions;
   }
 
@@ -152,7 +161,6 @@ export class MemoryIngestionPolicy {
       });
     }
 
-    const status = output.type === "confirmed_counseling_preference" ? "confirmed_counseling_preference" : output.type;
     const delta = {
       operation: "add_new",
       confidence: output.confidence || "medium",
@@ -166,12 +174,7 @@ export class MemoryIngestionPolicy {
       delta,
       category,
       commitClass: "post_response_ai_produced_output",
-      payload: {
-        type: output.type,
-        value: output.value || output,
-        status,
-        skillName: selectedSkillContext?.selectedRuntimeSkill?.name
-      },
+      payload: payloadForOutput(output, selectedSkillContext),
       projectionIntent: category === "decision_support" ? "history_only" : "may_update_current_truth"
     });
   }
@@ -276,9 +279,28 @@ function valueOf(delta) {
 }
 
 function categoryForAiOutput(output = {}) {
+  if (output.type === "route_outcome") return "route_outcome";
   if (HANDOFF_OUTPUTS.has(output.type)) return "handoff_readiness";
   if (output.type === "confirmed_counseling_preference") return "counseling_preference";
   if (output.type === "recommendation_shown") return "recommendation_interaction";
   if (DECISION_SUPPORT_OUTPUTS.has(output.type)) return "decision_support";
   return null;
+}
+
+function payloadForOutput(output, selectedSkillContext) {
+  if (output.type === "route_outcome") {
+    return {
+      type: output.type,
+      ...(output.value || {}),
+      outcome: output.value?.outcome,
+      status: output.value?.outcome,
+      skillName: selectedSkillContext?.selectedRuntimeSkill?.name
+    };
+  }
+  return {
+    type: output.type,
+    value: output.value || output,
+    status: output.type === "confirmed_counseling_preference" ? "confirmed_counseling_preference" : output.type,
+    skillName: selectedSkillContext?.selectedRuntimeSkill?.name
+  };
 }

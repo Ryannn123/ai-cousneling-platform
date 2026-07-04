@@ -12,7 +12,17 @@ export const MEMORY_CATEGORIES = new Set([
   "concern_or_blocker",
   "decision_support",
   "recommendation_interaction",
-  "handoff_readiness"
+  "handoff_readiness",
+  "route_outcome"
+]);
+
+const ROUTE_OUTCOMES = new Set([
+  "confirmed_preference",
+  "accepted_fallback",
+  "deferred_decision",
+  "student_switched_route",
+  "blocked_by_boundary",
+  "handoff_required"
 ]);
 
 export const OFFICIAL_TRUTH_PATTERN = /\b(application submitted|registration completed|registered|payment confirmed|paid|seat reserved|crm updated|crm status updated|enrollment confirmed|enrolled|scholarship approved|eligibility approved|exception approved|official document submitted)\b/i;
@@ -46,6 +56,10 @@ export class MemoryEventValidator {
     if (draft?.category === "counseling_preference" && draft.payload?.status !== "confirmed_counseling_preference") {
       invariantChecks.promotionSafe = false;
       errors.push("confirmed_preference_requires_explicit_status");
+    }
+    if (draft?.category === "route_outcome" && !ROUTE_OUTCOMES.has(draft.payload?.outcome)) {
+      invariantChecks.categoryPayloadCompatible = false;
+      errors.push("route_outcome_invalid");
     }
 
     const status = errors.length ? "reject" : warnings.length ? "valid_with_warnings" : "valid";

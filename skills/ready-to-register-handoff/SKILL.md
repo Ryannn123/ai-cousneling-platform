@@ -1,14 +1,16 @@
 ---
 name: ready-to-register-handoff
 description: Prepare handoff when the student wants to apply, register, pay, enroll, or reserve a seat.
-version: 1.0.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
-applies_to_states:
-  - S7
+applies_to_active_routes:
+  - handoff_preparation
+applies_to_progress_states:
+  - handoff
 applies_to_actions:
-  - A12
+  - prepare_handoff
 applies_to_zones:
   - red
 allowed_memory_outputs:

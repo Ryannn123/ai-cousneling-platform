@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path"; 
 import { CounselingTurnOrchestrator } from "./runtime/counselingTurnOrchestrator.js";
-import { ACTIONS, READINESS, STATES } from "./runtime/constants.js";
+import { ACTIONS, COUNSELING_ACTIONS, READINESS, ROUTE_OUTCOMES, ROUTE_PROGRESS_STATES, ROUTE_TYPES, STATES } from "./runtime/constants.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(process.cwd(), "public");
@@ -32,7 +32,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && req.url === "/api/labels") {
-      return json(res, { states: STATES, actions: ACTIONS, readiness: READINESS });
+      return json(res, {
+        states: STATES,
+        actions: { ...ACTIONS, ...COUNSELING_ACTIONS },
+        readiness: READINESS,
+        routes: ROUTE_TYPES,
+        progressStates: ROUTE_PROGRESS_STATES,
+        routeOutcomes: ROUTE_OUTCOMES
+      });
     }
 
     if (req.method === "GET") {

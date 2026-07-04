@@ -83,6 +83,15 @@ function emptyProjection(studentId, events) {
         seatReserved: false,
         crmStatusUpdated: false
       }
+    },
+    routeEpisodeProjection: {
+      latestRouteOutcomeByRoute: {},
+      routeOutcomeHistory: [],
+      routeDeferralHistory: [],
+      routeSwitchHistory: [],
+      fallbackHistory: [],
+      handoffRouteOutcomes: [],
+      resumeRouteCandidateHint: undefined
     }
   };
 }
@@ -157,6 +166,10 @@ function applyEvent(projection, event) {
   }
   if (event.category === "handoff_readiness") {
     applyHandoffReadiness(projection, event);
+    return;
+  }
+  if (event.category === "route_outcome") {
+    applyRouteOutcome(projection, event);
   }
 }
 
@@ -215,6 +228,35 @@ function applyHandoffReadiness(projection, event) {
     ]
   };
   projection.preference.preferenceStrength = "L5";
+}
+
+function applyRouteOutcome(projection, event) {
+  const payload = event.payload || {};
+  const value = payload.value || payload;
+  const routeType = value.routeType || payload.routeType;
+  const outcome = value.outcome || payload.outcome || payload.status;
+  if (!routeType || !outcome) return;
+
+  const item = {
+    routeType,
+    outcome,
+    value,
+    confidence: event.confidence,
+    supportingEventIds: [event.eventId]
+  };
+  projection.routeEpisodeProjection.routeOutcomeHistory.push(item);
+  projection.routeEpisodeProjection.latestRouteOutcomeByRoute[routeType] = item;
+
+  if (outcome === "deferred_decision") {
+    projection.routeEpisodeProjection.routeDeferralHistory.push(item);
+    projection.routeEpisodeProjection.resumeRouteCandidateHint = routeType;
+  }
+  if (outcome === "student_switched_route") {
+    projection.routeEpisodeProjection.routeSwitchHistory.push(item);
+    if (value.nextRouteCandidate) projection.routeEpisodeProjection.resumeRouteCandidateHint = value.nextRouteCandidate;
+  }
+  if (outcome === "accepted_fallback") projection.routeEpisodeProjection.fallbackHistory.push(item);
+  if (outcome === "handoff_required") projection.routeEpisodeProjection.handoffRouteOutcomes.push(item);
 }
 
 function finalizeDirection(projection) {

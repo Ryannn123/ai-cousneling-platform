@@ -1,22 +1,23 @@
 ---
 name: shortlist-comparison
 description: Compare or shortlist options without converting preference into official action.
-version: 1.2.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
-applies_to_states:
-  - S5
+applies_to_active_routes:
+  - course_exploration
+  - university_exploration
+  - pathway_exploration
+  - combined_option_validation
 applies_to_actions:
-  - A7
+  - compare_shortlist
 applies_to_zones:
   - green
   - yellow
-applies_to_profile_completeness:
-  - minimum_complete
-  - rich_profile
-applies_to_minimum_profile_routes:
-  - comparison_or_shortlist
+applies_to_progress_states:
+  - comparison
+  - decision_support
 student_postures_supported:
   - comparison_oriented
   - indecisive

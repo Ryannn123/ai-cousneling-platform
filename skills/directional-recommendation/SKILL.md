@@ -1,26 +1,25 @@
 ---
 name: directional-recommendation
 description: Give an R2 directional recommendation with assumptions, cautions, and medium confidence.
-version: 1.2.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
-applies_to_states:
-  - S4
+applies_to_active_routes:
+  - university_exploration
+  - combined_option_validation
+  - pathway_exploration
 applies_to_actions:
-  - A6
+  - recommend_directionally
 applies_to_zones:
   - green
   - yellow
 applies_to_recommendation_readiness:
   - R2
   - R3
-applies_to_profile_completeness:
-  - minimum_complete
-  - rich_profile
-applies_to_minimum_profile_routes:
-  - university_exploration
-  - recommendation_or_validation
+applies_to_progress_states:
+  - recommendation_ready
+  - exploration
 student_postures_supported:
   - course_first
   - validation_seeking

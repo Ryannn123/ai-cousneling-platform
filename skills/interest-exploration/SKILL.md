@@ -1,22 +1,22 @@
 ---
 name: interest-exploration
 description: Explore course, pathway, or university direction after route profile is available.
-version: 1.2.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
-applies_to_states:
-  - S3
+applies_to_active_routes:
+  - course_exploration
+  - course_exploration_within_university_context
+  - pathway_exploration
 applies_to_actions:
-  - A3
+  - explore_route
 applies_to_zones:
   - green
-applies_to_profile_completeness:
-  - minimum_complete
-  - rich_profile
-applies_to_minimum_profile_routes:
-  - course_or_pathway_exploration
-  - course_exploration_within_university_context
+applies_to_progress_states:
+  - opening
+  - exploration
+  - decision_support
 student_postures_supported:
   - lost_or_confused
   - university_first
@@ -34,6 +34,7 @@ allowed_memory_outputs:
   - weak_interest
   - expressed_interest
   - active_student_direction
+  - ai_core_fallback_used
 forbidden_memory_outputs:
   - application_submitted
   - registration_completed

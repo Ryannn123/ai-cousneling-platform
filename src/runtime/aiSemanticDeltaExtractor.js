@@ -386,8 +386,11 @@ function runtimeOnlySignalSchema() {
     additionalProperties: false,
     required: ["kind", "confidence", "evidence"],
     properties: {
-      kind: stringEnum(["boundary", "knowledge_need", "student_posture", "ambiguity"], "Runtime bucket for this current-turn signal."),
+      kind: stringEnum(["boundary", "knowledge_need", "student_posture", "ambiguity", "route_episode"], "Runtime bucket for this current-turn signal."),
       type: { type: "string", description: "Specific signal type within the selected kind." },
+      signalType: stringEnum(["student_led_route_switch_signal", "route_deferral_signal", "route_confirmation_signal", "route_detour_signal", "route_resume_signal", "route_loop_risk_signal", "route_blocker_signal", "combined_validation_signal"], "Route episode signal type when kind is route_episode."),
+      routeHint: stringEnum(["initial_route_selection", "course_exploration", "university_exploration", "course_exploration_within_university_context", "pathway_exploration", "combined_option_validation", "handoff_preparation"], "Optional route hint; the platform owns the final active route."),
+      targetHint: { ...looseObjectSchema(), description: "Optional course, university, pathway, or combined option hinted by the student." },
       triggerType: stringEnum(["H1", "H2", "H3", "H4", "H5", "H6"], "Boundary trigger family when kind is boundary."),
       severityCandidate: stringEnum(["yellow", "red"], "Boundary severity candidate; red usually requires handoff."),
       recommendedBehavior: stringEnum(["continue", "clarify_once", "handoff"], "Recommended current-turn control behavior."),

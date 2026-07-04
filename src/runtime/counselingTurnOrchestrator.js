@@ -11,6 +11,8 @@ import { ValidationPipeline } from "./validationPipeline.js";
 import { commitTurn, createConversation, loadConversation } from "./outputCommitService.js";
 import { writeAuditEvent } from "./auditEventWriter.js";
 import { MemoryStateService } from "./memoryStateService.js";
+import { RouteEpisodeCandidateResolver } from "./routeEpisodeCandidateResolver.js";
+import { RouteEpisodePlanner } from "./routeEpisodePlanner.js";
 
 export class CounselingTurnOrchestrator {
   constructor(services = {}) {
@@ -23,6 +25,8 @@ export class CounselingTurnOrchestrator {
     this.semanticDeltaValidator = services.semanticDeltaValidator || new SemanticDeltaValidator();
     this.validationPipeline = services.validationPipeline || new ValidationPipeline();
     this.memoryStateService = services.memoryStateService || new MemoryStateService();
+    this.routeEpisodeCandidateResolver = services.routeEpisodeCandidateResolver || new RouteEpisodeCandidateResolver();
+    this.routeEpisodePlanner = services.routeEpisodePlanner || new RouteEpisodePlanner();
   }
 
   async createConversation() {
@@ -89,8 +93,22 @@ export class CounselingTurnOrchestrator {
       conversationId,
       turnId: turnInput.turnId
     });
+    const routeCandidate = this.routeEpisodeCandidateResolver.resolve({
+      currentTruthProjection: currentTruth,
+      acceptedSemanticDelta,
+      previousOperatingContext: previousState.operatingContext,
+      studentMessage
+    });
     const boundaryResult = this.boundaryEngine.evaluate(turnInput, { fastBoundarySignals, acceptedSemanticDelta });
-    const { context: operatingContext } = this.operatingContextManager.build(previousState, turnInput, boundaryResult, acceptedSemanticDelta, currentTruth);
+    const activeRouteEpisode = this.routeEpisodePlanner.plan({
+      boundaryResult,
+      routeCandidate,
+      currentTruthProjection: currentTruth,
+      acceptedSemanticDelta,
+      previousOperatingContext: previousState.operatingContext,
+      studentMessage
+    });
+    const { context: operatingContext } = this.operatingContextManager.build(previousState, turnInput, boundaryResult, acceptedSemanticDelta, currentTruth, activeRouteEpisode);
     const skillSelection = await this.skillControlService.select(operatingContext, boundaryResult);
 
     // Checkpoint 1: platform-controlled context, boundary, skill, and knowledge before AI text.
@@ -101,6 +119,7 @@ export class CounselingTurnOrchestrator {
       acceptedSemanticDelta: semanticDeltaSummary(acceptedSemanticDelta),
       currentTruth,
       operatingContext,
+      activeRouteEpisode: operatingContext.activeRouteEpisode,
       boundaryResult,
       skillSelection,
       allowedMemoryOutputTypes: skillSelection.allowedMemoryOutputTypes,
@@ -189,6 +208,12 @@ export class CounselingTurnOrchestrator {
         postResponseMemoryCommitResult,
         responseRetry
       },
+      routeAudit: {
+        routeCandidate,
+        activeRouteEpisode,
+        routeTransitionDecision: activeRouteEpisode.transitionDecision,
+        routeOutcomeValidation: validationResult.routeOutcomeValidation
+      },
       semanticDeltaAudit: {
         rawSemanticDelta,
         acceptedSemanticDelta,
@@ -216,6 +241,8 @@ export class CounselingTurnOrchestrator {
       boundaryResult,
       operatingContext: commitResult.committedContext,
       currentTruth: finalCurrentTruth,
+      routeCandidate,
+      activeRouteEpisode,
       skillSelection,
       validationResult,
       commitResult,
@@ -246,7 +273,8 @@ function currentTruthForExtraction(currentTruth) {
     hardConstraints: currentTruth.qualityContext.hardConstraints.map((item) => item.value),
     softPreferences: currentTruth.qualityContext.softPreferences.map((item) => item.value),
     currentDecisionBlockers: currentTruth.decisionContext.currentDecisionBlockers.map((item) => item.value),
-    handoffRequired: currentTruth.handoffReadiness.handoffRequired
+    handoffRequired: currentTruth.handoffReadiness.handoffRequired,
+    routeEpisodeProjection: currentTruth.routeEpisodeProjection
   };
 }
 

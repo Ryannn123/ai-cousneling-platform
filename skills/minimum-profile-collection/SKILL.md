@@ -1,18 +1,18 @@
 ---
 name: minimum-profile-collection
 description: Collect academic result plus course and university direction status for routing.
-version: 1.2.0
+version: 1.3.0
 artifact_type: runtime_skill
 status: approved
 owner: counseling_team
-applies_to_states:
-  - S1
+applies_to_active_routes:
+  - initial_route_selection
+applies_to_progress_states:
+  - opening
 applies_to_actions:
-  - A2
+  - orient_initial_route
 applies_to_zones:
   - green
-applies_to_profile_completeness:
-  - incomplete
 counselor_response_pattern:
   - reflect
   - guide
@@ -39,10 +39,10 @@ required_boundary_rules:
 # Minimum Profile Collection
 
 ## Purpose
-Collect the minimum information needed to route the counseling flow.
+Collect the next useful information needed to choose the first counseling route.
 
 ## Counseling Goal
-Academic result status, course direction status, and university direction status.
+Academic result or broad course/university/pathway direction, whichever is most useful next.
 
 ## Response Pattern
 Reflect briefly, explain that these fields choose the next route, and ask one concise question. Do not require ranking, budget, or location as universal intake gates.
