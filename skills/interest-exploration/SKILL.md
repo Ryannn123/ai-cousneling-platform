@@ -17,14 +17,6 @@ applies_to_progress_states:
   - opening
   - exploration
   - decision_support
-student_postures_supported:
-  - lost_or_confused
-  - university_first
-  - pathway_first
-counselor_response_pattern:
-  - reflect
-  - guide
-  - ask_one_next_question
 counselor_response_modes:
   - reassuring_orientation
   - route_explanation

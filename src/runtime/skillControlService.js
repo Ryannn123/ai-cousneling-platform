@@ -96,6 +96,7 @@ export class SkillControlService {
     return {
       selectedPlaybook,
       selectedRuntimeSkill: selectedRuntimeSkill || fallbackRef(runtimeSkillName, "runtime_skill"),
+      selectedRuntimeSkillBody: selectedRuntimeSkillPackage?.body || "",
       loadedBoundaryRules,
       rejectedCandidates,
       allowedMemoryOutputTypes: selectedRuntimeSkillPackage?.metadata.allowed_memory_outputs || [],

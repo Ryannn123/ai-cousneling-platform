@@ -116,24 +116,27 @@ export class CounselingTurnOrchestrator {
     const executionContext = {
       studentMessage,
       conversationContext: turnInput.recentConversationSummary,
-      acceptedSemanticDelta: semanticDeltaSummary(acceptedSemanticDelta),
-      currentTruth,
-      operatingContext,
-      activeRouteEpisode: operatingContext.activeRouteEpisode,
-      boundaryResult,
-      skillSelection,
-      allowedMemoryOutputTypes: skillSelection.allowedMemoryOutputTypes,
-      forbiddenMemoryOutputTypes: skillSelection.forbiddenMemoryOutputTypes,
-      requiredResponseBehavior: behaviorForBoundary(boundaryResult),
-      counselorLikeGuidance: {
-        responseMode: operatingContext.counselorResponseMode,
-        responsePattern: ["reflect_student_situation", "guide_next_step", "ask_one_purposeful_question"],
+      currentTruth: currentTruthForResponse(currentTruth),
+      activeRouteEpisode: routeEpisodeForResponse(operatingContext.activeRouteEpisode),
+      responsePlan: {
+        requiredBehavior: behaviorForBoundary(boundaryResult),
+        primaryCounselingAction: operatingContext.primaryCounselingAction,
+        counselorResponseMode: operatingContext.counselorResponseMode,
         studentPosture: operatingContext.studentPosture,
-        decisionSupportMode: operatingContext.decisionSupportMode
+        decisionSupportMode: operatingContext.decisionSupportMode,
+        nextBestCounselingMove: operatingContext.nextBestCounselingMove,
+        zone: boundaryResult.finalZone,
+        triggerType: boundaryResult.triggerType,
+        boundaryReason: boundaryResult.aiBoundaryReason,
+        handoffStatus: operatingContext.handoffStatus
       },
-      requiredStructuredSchemaVersion: "phase4.prototype.v1",
-      knowledgeContext: knowledgeAnswer ? {
-        sources: knowledgeAnswer,
+      skill: {
+        name: skillSelection.selectedRuntimeSkill.name,
+        version: skillSelection.selectedRuntimeSkill.version,
+        body: skillSelection.selectedRuntimeSkillBody
+      },
+      knowledge: knowledgeAnswer ? {
+        answer: knowledgeAnswer,
         uncertaintyLevel: knowledgeAnswer.uncertaintyLevel
       } : undefined
     };
@@ -258,7 +261,7 @@ function shouldRetryResponse(validationResult) {
   return validationResult.status === "safe_fallback";
 }
 
-function currentTruthForExtraction(currentTruth) {
+export function currentTruthForExtraction(currentTruth) {
   return {
     instruction: "Read-only context. Use only to interpret the new student message. Do not re-emit existing memory unless the student restates, corrects, rejects, or changes it.",
     academicResultStatus: currentTruth.academic.academicResultStatus,
@@ -279,16 +282,53 @@ function currentTruthForExtraction(currentTruth) {
   };
 }
 
+function currentTruthForResponse(currentTruth) {
+  return {
+    academic: {
+      status: currentTruth.academic.academicResultStatus,
+      result: currentTruth.academic.latestUsableAcademicResult?.rawText
+    },
+    directions: {
+      courseStatus: currentTruth.direction.courseDirectionStatus,
+      universityStatus: currentTruth.direction.universityDirectionStatus,
+      pathwayStatus: currentTruth.direction.pathwayDirectionStatus,
+      courses: currentTruth.direction.activeCourseDirections.map(directionForPrompt),
+      universities: currentTruth.direction.activeUniversityDirections.map(directionForPrompt),
+      pathways: currentTruth.direction.activePathwayDirections.map(directionForPrompt)
+    },
+    preference: currentTruth.preference,
+    routeReadiness: currentTruth.route.routeReadiness,
+    recommendationReadiness: currentTruth.recommendationReadiness.level,
+    qualityContext: {
+      hardConstraints: currentTruth.qualityContext.hardConstraints.map((item) => item.value),
+      softPreferences: currentTruth.qualityContext.softPreferences.map((item) => item.value),
+      influenceOrContext: currentTruth.qualityContext.influenceOrContext.map((item) => item.value)
+    },
+    blockers: currentTruth.decisionContext.currentDecisionBlockers.map((item) => item.value),
+    routeEpisodeProjection: currentTruth.routeEpisodeProjection
+  };
+}
+
+function directionForPrompt(item) {
+  return { value: item.value, status: item.status };
+}
+
+function routeEpisodeForResponse(route = {}) {
+  return {
+    routeType: route.routeType,
+    progressState: route.progressState,
+    routeGoal: route.routeGoal,
+    transition: route.transitionDecision?.decision,
+    routeOutcomeCandidate: route.routeOutcomeCandidate,
+    detour: route.detourOverlay?.detourKind,
+    activeDirections: route.activeDirections,
+    preferenceStrength: route.preferenceStrength,
+    recommendationReadiness: route.recommendationReadiness
+  };
+}
+
 function behaviorForBoundary(boundaryResult) {
   if (boundaryResult.allowedNextBehavior === "handoff") return "prepare_handoff";
   if (boundaryResult.allowedNextBehavior === "clarify") return "ask_clarification";
   return "continue_normal_counseling";
-}
-
-function semanticDeltaSummary(acceptedSemanticDelta) {
-  return {
-    status: acceptedSemanticDelta.status,
-    acceptedMemoryDeltas: acceptedSemanticDelta.acceptedMemoryDeltas,
-    acceptedRuntimeOnlySignals: acceptedSemanticDelta.acceptedRuntimeOnlySignals
-  };
 }

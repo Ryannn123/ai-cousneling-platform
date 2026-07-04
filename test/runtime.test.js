@@ -10,7 +10,6 @@ import { ValidationPipeline } from "../src/runtime/validationPipeline.js";
 import { CounselingTurnOrchestrator } from "../src/runtime/counselingTurnOrchestrator.js";
 import { AIExecutionClient } from "../src/runtime/aiExecutionClient.js";
 import { AISemanticDeltaExtractor } from "../src/runtime/aiSemanticDeltaExtractor.js";
-import { parseLlmSemanticDelta } from "../src/runtime/semanticDeltaLayer.js";
 import { SemanticDeltaValidator } from "../src/runtime/semanticDeltaValidator.js";
 import { AuditEventStore } from "../src/runtime/auditEventStore.js";
 import { CurrentTruthProjector } from "../src/runtime/currentTruthProjector.js";
@@ -292,17 +291,19 @@ function escapeRegex(value) {
 }
 
 function mockExecution(executionContext) {
-  const { operatingContext, boundaryResult, studentMessage, knowledgeContext } = executionContext;
+  const { responsePlan = {}, studentMessage, knowledge } = executionContext;
+  const requiredBehavior = responsePlan.requiredBehavior || "continue_normal_counseling";
+  const action = responsePlan.primaryCounselingAction;
   const baseFlags = {
-    needsClarification: boundaryResult.allowedNextBehavior === "clarify",
-    boundarySensitive: boundaryResult.finalZone !== "green",
-    officialActionRisk: boundaryResult.finalZone === "red",
+    needsClarification: requiredBehavior === "ask_clarification",
+    boundarySensitive: responsePlan.zone !== "green",
+    officialActionRisk: responsePlan.zone === "red",
     memoryWriteRequiresValidation: true,
-    knowledgeUsed: Boolean(knowledgeContext),
-    knowledgeUncertain: knowledgeContext?.uncertaintyLevel === "decision_critical"
+    knowledgeUsed: Boolean(knowledge),
+    knowledgeUncertain: knowledge?.uncertaintyLevel === "decision_critical"
   };
 
-  if (boundaryResult.allowedNextBehavior === "handoff") {
+  if (requiredBehavior === "prepare_handoff") {
     return {
       response: {
         studentMessage: "I can help prepare the next step, but application, registration, payment, or seat confirmation needs a human counselor. I will prepare a handoff summary so the team can continue with you.",
@@ -313,8 +314,8 @@ function mockExecution(executionContext) {
         recommendationOutputs: [],
         handoffOutput: {
           required: true,
-          triggerType: boundaryResult.triggerType,
-          reason: boundaryResult.aiBoundaryReason,
+          triggerType: responsePlan.triggerType,
+          reason: responsePlan.boundaryReason,
           summary: `Student said: "${studentMessage}". Human counselor should handle official next steps.`
         }
       },
@@ -322,7 +323,7 @@ function mockExecution(executionContext) {
     };
   }
 
-  if (boundaryResult.allowedNextBehavior === "clarify") {
+  if (requiredBehavior === "ask_clarification") {
     return {
       response: {
         studentMessage: "When you say proceed, do you mean this is your counseling preference for now, or that you want to apply or register officially?",
@@ -334,23 +335,23 @@ function mockExecution(executionContext) {
     };
   }
 
-  if (operatingContext.primaryCounselingAction === "answer_detour") {
-    const facts = knowledgeContext?.sources?.facts || [];
+  if (action === "answer_detour") {
+    const facts = knowledge?.answer?.facts || [];
     const factText = facts.length
       ? facts.map((fact) => `${fact.program} at ${fact.university}: ${fact.location}, about MYR ${fact.annualFeeMyr}/year, ${fact.pathwayDuration}.`).join(" ")
-      : knowledgeContext?.sources?.caveat || "I do not have a verified fact for that in the prototype catalog.";
+      : knowledge?.answer?.caveat || "I do not have a verified fact for that in the prototype catalog.";
     return executionResult("answer", `${factText} After that, we can return to choosing the best-fit direction.`, {
       proposedContextUpdate: {}
     }, baseFlags);
   }
 
-  if (operatingContext.primaryCounselingAction === "orient_initial_route") {
+  if (action === "orient_initial_route") {
     return executionResult("ask_clarification", "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.", {
       proposedContextUpdate: {}
     }, baseFlags);
   }
 
-  if (operatingContext.primaryCounselingAction === "recommend_directionally") {
+  if (action === "recommend_directionally") {
     return executionResult("recommend", "You already have enough direction for a first counseling recommendation. Based on what you shared, I can make a medium-confidence suggestion and then refine it with one fit question. Psychology could fit if you want people-focused work; Business stays broader if you want management, marketing, or finance flexibility. Which matters more to you now: career direction, budget, or location?", {
       proposedContextUpdate: {},
       recommendationOutputs: [{
@@ -363,13 +364,13 @@ function mockExecution(executionContext) {
     }, baseFlags);
   }
 
-  if (operatingContext.primaryCounselingAction === "compare_shortlist") {
+  if (action === "compare_shortlist") {
     return executionResult("compare", "You are comparing directions, so the useful move is to narrow by trade-off instead of adding more options. Psychology is stronger if you want counseling, HR, or human behavior. Business is broader if you want management, marketing, or finance flexibility. Which trade-off matters more to you: focused interest or broader flexibility?", {
       proposedContextUpdate: {}
     }, baseFlags);
   }
 
-  if (operatingContext.primaryCounselingAction === "confirm_counseling_preference") {
+  if (action === "confirm_counseling_preference") {
     return executionResult("confirm_preference", "For counseling purposes, I can treat this as your current preferred direction. This is not an application, registration, payment, enrollment, seat reservation, or CRM update. It just gives us a clear counseling milestone; from here, you can compare one final alternative, take time to think, or speak with a human counselor for official next steps.", {
       proposedContextUpdate: {}
     }, baseFlags);
@@ -803,85 +804,6 @@ test("gemini semantic delta extractor surfaces live Gemini 400", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
-});
-
-test("raw semantic delta layer returns parsed OpenAI output without hydration or fast boundary input", async () => {
-  const originalFetch = globalThis.fetch;
-  const rawSemanticDelta = rawSemanticDeltaFixture();
-  let capturedRequest;
-  globalThis.fetch = async (url, options) => {
-    capturedRequest = { url: String(url), body: JSON.parse(options.body) };
-    return {
-      ok: true,
-      async json() {
-        return { output_text: JSON.stringify(rawSemanticDelta) };
-      }
-    };
-  };
-
-  try {
-    const result = await parseLlmSemanticDelta({
-      studentMessage: "Psychology sounds interesting.",
-      recentConversationSummary: "student: hello"
-    }, { provider: "openai", openaiApiKey: "test-key", model: "gpt-test" });
-
-    assert.match(capturedRequest.url, /api\.openai\.com\/v1\/responses/);
-    assert.deepEqual(JSON.parse(capturedRequest.body.input[1].content), {
-      studentMessage: "Psychology sounds interesting.",
-      recentConversationSummary: "student: hello"
-    });
-    assert.deepEqual(result, rawSemanticDelta);
-    assert.equal(result.conversationId, undefined);
-    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].source, undefined);
-    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].promotionRisk, undefined);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("raw semantic delta layer returns parsed Gemini output without hydration or fast boundary input", async () => {
-  const originalFetch = globalThis.fetch;
-  const rawSemanticDelta = rawSemanticDeltaFixture();
-  let capturedRequest;
-  globalThis.fetch = async (url, options) => {
-    capturedRequest = { url: String(url), body: JSON.parse(options.body) };
-    return {
-      ok: true,
-      async json() {
-        return {
-          steps: [{
-            type: "model_output",
-            content: [{ type: "text", text: JSON.stringify(rawSemanticDelta) }]
-          }]
-        };
-      }
-    };
-  };
-
-  try {
-    const result = await parseLlmSemanticDelta({
-      studentMessage: "Psychology sounds interesting.",
-      recentConversationSummary: "student: hello"
-    }, { provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
-
-    assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
-    assert.deepEqual(JSON.parse(capturedRequest.body.input), {
-      studentMessage: "Psychology sounds interesting.",
-      recentConversationSummary: "student: hello"
-    });
-    assert.deepEqual(result, rawSemanticDelta);
-    assert.equal(result.conversationId, undefined);
-    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].source, undefined);
-    assert.equal(result.memoryDeltaCandidates.flowDrivingDeltas.coursesConsidering[0].promotionRisk, undefined);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("raw semantic delta layer requires a provider API key", async () => {
-  await assert.rejects(parseLlmSemanticDelta({
-    studentMessage: "Psychology sounds interesting."
-  }, { provider: "openai", openaiApiKey: "" }), /API key is required/);
 });
 
 test("phase 4 direction change creates runtime-only ambiguity without rewriting active direction", async () => {
@@ -1686,12 +1608,21 @@ test("gemini provider calls interactions and parses JSON output", async () => {
     const client = new AIExecutionClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
     const result = await client.execute({
       studentMessage: "Hello",
-      operatingContext: {},
-      boundaryResult: { finalZone: "green" }
+      conversationContext: "student: I have SPM 5A",
+      currentTruth: { academic: { status: "known", result: "SPM 5A" } },
+      activeRouteEpisode: { routeType: "course_exploration", progressState: "exploration" },
+      responsePlan: { requiredBehavior: "continue_normal_counseling", primaryCounselingAction: "explore_route" },
+      skill: { name: "interest-exploration", version: "1.3.0", body: "# Interest Exploration\nAsk one useful next question." }
     });
 
     assert.match(capturedRequest.url, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
     assert.equal(capturedRequest.body.model, "gemini-test");
+    assert.match(capturedRequest.body.system_instruction, /reflect the student's situation/i);
+    assert.match(capturedRequest.body.input, /## Student Message\nHello/);
+    assert.match(capturedRequest.body.input, /## Current Truth/);
+    assert.match(capturedRequest.body.input, /## Runtime Skill/);
+    assert.match(capturedRequest.body.input, /# Interest Exploration/);
+    assert.doesNotMatch(capturedRequest.body.input, /"studentMessage"/);
     assert.equal(capturedRequest.body.response_format.mime_type, "application/json");
     assert.deepEqual(capturedRequest.body.response_format.schema.required, ["response", "proposedContextUpdate", "proposedOutputs", "validationFlags"]);
     assert.deepEqual(capturedRequest.body.response_format.schema.properties.response.required, ["studentMessage", "responseIntent"]);
@@ -1732,8 +1663,9 @@ test("gemini malformed JSON shape surfaces live provider error", async () => {
     const client = new AIExecutionClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
     await assert.rejects(client.execute({
       studentMessage: "My SPM results are good.",
-      operatingContext: { primaryCounselingAction: "orient_initial_route" },
-      boundaryResult: { finalZone: "green", allowedNextBehavior: "continue" }
+      currentTruth: { academic: { status: "known", result: "SPM results are good" } },
+      responsePlan: { requiredBehavior: "continue_normal_counseling", primaryCounselingAction: "orient_initial_route" },
+      skill: { name: "initial-route-orientation", body: "# Initial Route Orientation" }
     }), /Gemini returned invalid AIExecutionResult/);
   } finally {
     globalThis.fetch = originalFetch;

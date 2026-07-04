@@ -29,6 +29,7 @@ export class AIExecutionClient {
   }
 
   async executeOpenAiLive(executionContext) {
+    const prompt = buildResponsePrompt(executionContext);
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -40,11 +41,11 @@ export class AIExecutionClient {
         input: [
           {
             role: "system",
-            content: "You are a bounded autonomous pre-registration education counselor. Return only JSON matching the requested schema. Use counselor-like flow: reflect the student's situation, guide the next step, and ask only one purposeful question when needed. Do not claim official actions are completed."
+            content: SYSTEM_PROMPT
           },
           {
             role: "user",
-            content: JSON.stringify(executionContext)
+            content: prompt
           }
         ],
         text: {
@@ -71,14 +72,15 @@ export class AIExecutionClient {
 
   async executeGeminiLive(executionContext) {
     const url = new URL("https://generativelanguage.googleapis.com/v1beta/interactions");
+    const prompt = buildResponsePrompt(executionContext);
 
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.geminiApiKey },
       body: JSON.stringify({
         model: cleanGeminiModelName(this.model),
-        system_instruction: "You are a bounded autonomous pre-registration education counselor. Return only JSON matching the requested schema. Use counselor-like flow: reflect the student's situation, guide the next step, and ask only one purposeful question when needed. Do not claim official actions are completed.",
-        input: JSON.stringify(executionContext),
+        system_instruction: SYSTEM_PROMPT,
+        input: prompt,
         store: false,
         response_format: {
           type: "text",
@@ -97,6 +99,38 @@ export class AIExecutionClient {
     if (!text) throw new Error("Gemini response did not include output text");
     return parseAiExecutionResult(text, "Gemini");
   }
+}
+
+const SYSTEM_PROMPT = [
+  "You are a bounded autonomous pre-registration education counselor.",
+  "Return only JSON matching the requested schema.",
+  "Use counselor-like flow: briefly reflect the student's situation, guide the next step, and ask only one purposeful question when needed.",
+  "Follow the selected runtime skill instructions and the response plan.",
+  "Do not claim application, registration, payment, enrollment, seat reservation, CRM update, admission approval, or other official actions are completed.",
+  "Treat confirmed preferences as counseling-only unless the response plan requires handoff."
+].join(" ");
+
+function buildResponsePrompt(context = {}) {
+  return [
+    section("Student Message", context.studentMessage || ""),
+    section("Conversation Context", context.conversationContext || "No prior messages."),
+    section("Current Truth", context.currentTruth),
+    section("Active Route Episode", context.activeRouteEpisode),
+    section("Response Plan", context.responsePlan),
+    section("Runtime Skill", {
+      name: context.skill?.name,
+      version: context.skill?.version,
+      instructions: context.skill?.body || "No skill body available."
+    }),
+    context.knowledge ? section("Knowledge Context", context.knowledge) : null,
+    context.responseRetry ? section("Retry Instruction", context.responseRetry) : null,
+    "Produce the JSON response now."
+  ].filter(Boolean).join("\n\n");
+}
+
+function section(title, value) {
+  const content = typeof value === "string" ? value : JSON.stringify(value || {}, null, 2);
+  return `## ${title}\n${content}`;
 }
 
 function inferProvider(model) {
