@@ -1,6 +1,7 @@
 import { OFFICIAL_ACTION_OUTPUTS } from "./constants.js";
 import { RouteOutcomeValidator } from "./routeOutcomeValidator.js";
 import { RouteResponseAlignmentValidator } from "./routeResponseAlignmentValidator.js";
+import { routeGoal } from "./routeEpisodeCandidateResolver.js";
 
 const OFFICIAL_COMPLETION_LANGUAGE = /\b(application submitted|registered you|registration completed|seat reserved|payment confirmed|enrollment confirmed|updated crm)\b/i;
 const OLD_MINIMUM_PROFILE_LANGUAGE = /\b(prestige\/ranking|ranking.*budget|budget.*location|preferred study location)\b/i;
@@ -69,25 +70,10 @@ export class ValidationPipeline {
       status = "safe_fallback";
     }
 
-    const allowedTypes = new Set(skillSelection.allowedMemoryOutputTypes || []);
     for (const output of aiExecutionResult.proposedOutputs.memoryOutputs || []) {
       if (OFFICIAL_ACTION_OUTPUTS.has(output.type)) {
         blockedOutputs.push({ output, reason: "official_action_output_not_commit_eligible" });
-        continue;
       }
-      if (allowedTypes.size && !allowedTypes.has(output.type)) {
-        blockedOutputs.push({ output, reason: `memory_type_${output.type}_not_allowed_by_skill` });
-        continue;
-      }
-      if (output.type === "confirmed_counseling_preference" && boundaryResult.allowedNextBehavior === "clarify") {
-        blockedOutputs.push({ output, reason: "ambiguous_proceed_must_clarify_before_preference_promotion" });
-        continue;
-      }
-      if (output.type === "confirmed_counseling_preference" && !supportsConfirmedPreference(acceptedSemanticDelta)) {
-        blockedOutputs.push({ output, reason: "confirmed_preference_not_supported_by_accepted_semantic_delta" });
-        continue;
-      }
-      acceptedMemoryOutputs.push(output);
     }
 
     for (const output of aiExecutionResult.proposedOutputs.recommendationOutputs || []) {
@@ -115,6 +101,9 @@ export class ValidationPipeline {
 
     const routeOutcomeValidation = this.routeOutcomeValidator.validate({ operatingContext, acceptedSemanticDelta, boundaryResult });
     validationEvents.push(...routeOutcomeValidation.validationEvents);
+    const acceptedOperatingContext = routeOutcomeValidation.status === "reject"
+      ? contextAfterRejectedRouteOutcome(operatingContext, routeOutcomeValidation)
+      : operatingContext;
 
     if (blockedOutputs.length && status === "accepted") status = "blocked";
     if (boundaryResult.allowedNextBehavior === "clarify") status = "clarify";
@@ -131,18 +120,55 @@ export class ValidationPipeline {
       },
       blockedOutputs,
       validationEvents,
-      routeOutcomeValidation
+      routeOutcomeValidation,
+      acceptedOperatingContext
     };
   }
 }
 
-function supportsConfirmedPreference(acceptedSemanticDelta) {
-  const flowDriving = acceptedSemanticDelta?.acceptedMemoryDeltas?.flowDrivingDeltas;
-  return Boolean(nonEmpty(flowDriving?.confirmedCounselingCoursePreferences)
-    || nonEmpty(flowDriving?.confirmedCounselingUniversityPreferences)
-    || nonEmpty(flowDriving?.confirmedCounselingPathwayPreferences));
-}
+function contextAfterRejectedRouteOutcome(operatingContext, routeOutcomeValidation) {
+  const context = structuredClone(operatingContext);
+  const route = context.activeRouteEpisode;
+  if (!route) return context;
 
-function nonEmpty(value) {
-  return Array.isArray(value) ? value.length > 0 : Boolean(value);
+  const previousRoute = route.transitionDecision?.previousRoute;
+  const activeRoute = previousRoute || route.routeType;
+  const progressState = route.progressState === "confirmed_preference" ? "decision_support" : route.progressState;
+  const evidence = route.transitionDecision?.evidence || [];
+
+  route.routeType = activeRoute;
+  route.routeGoal = routeGoal(activeRoute);
+  route.progressState = progressState;
+  delete route.routeOutcomeCandidate;
+  delete route.nextRouteCandidate;
+  route.transitionDecision = {
+    ...(previousRoute ? { previousRoute } : {}),
+    decision: "continue_active_route",
+    priority: "continue_active_route",
+    activeRoute,
+    progressState,
+    evidence,
+    requiresValidation: false,
+    auditReason: `Rejected route outcome (${routeOutcomeValidation.errors.join(", ")}); continuing active route.`
+  };
+
+  if (context.primaryCounselingAction === "confirm_counseling_preference") context.primaryCounselingAction = "support_decision";
+  if (context.counselorResponseMode === "milestone_confirmation") context.counselorResponseMode = "decision_support";
+  context.summaryCheckpointStatus = "not_required";
+  context.milestoneConfirmationStatus = "not_applicable";
+  context.validationRequirements = (context.validationRequirements || [])
+    .filter((requirement) => !["route_outcome_validation", "route_transition_validation"].includes(requirement));
+  context.nextBestCounselingMove = "Continue the active route without treating the outcome as complete.";
+  context.routeOutcomeRejection = {
+    status: routeOutcomeValidation.status,
+    errors: routeOutcomeValidation.errors
+  };
+  if (context.legacyMigration) {
+    context.legacyMigration = {
+      ...context.legacyMigration,
+      legacyMainState: progressState === "decision_support" ? "S8" : context.legacyMigration.legacyMainState,
+      legacyMinimumProfileRoute: context.legacyMigration.legacyMinimumProfileRoute
+    };
+  }
+  return context;
 }

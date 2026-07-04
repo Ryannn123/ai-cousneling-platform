@@ -140,7 +140,7 @@ function aiExecutionResultFailure(value) {
   }
   if (!isPlainObject(value.proposedContextUpdate)) return "proposedContextUpdate_must_be_object";
   if (!isPlainObject(value.proposedOutputs)) return "proposedOutputs_must_be_object";
-  if (!Array.isArray(value.proposedOutputs.memoryOutputs)) return "proposedOutputs.memoryOutputs_must_be_array";
+  if (value.proposedOutputs.memoryOutputs != null && !Array.isArray(value.proposedOutputs.memoryOutputs)) return "proposedOutputs.memoryOutputs_must_be_array";
   if (!Array.isArray(value.proposedOutputs.recommendationOutputs)) return "proposedOutputs.recommendationOutputs_must_be_array";
   if (value.proposedOutputs.handoffOutput != null && !isPlainObject(value.proposedOutputs.handoffOutput)) {
     return "proposedOutputs.handoffOutput_must_be_object_or_null";
@@ -175,9 +175,8 @@ function aiExecutionResultSchema() {
       proposedOutputs: {
         type: "object",
         additionalProperties: false,
-        required: ["memoryOutputs", "recommendationOutputs"],
+        required: ["recommendationOutputs"],
         properties: {
-          memoryOutputs: { type: "array", items: { type: "object" } },
           recommendationOutputs: { type: "array", items: { type: "object" } },
           handoffOutput: { type: ["object", "null"] }
         }
@@ -215,9 +214,8 @@ function geminiAiExecutionResultSchema() {
       proposedContextUpdate: { type: "object", additionalProperties: true },
       proposedOutputs: {
         type: "object",
-        required: ["memoryOutputs", "recommendationOutputs"],
+        required: ["recommendationOutputs"],
         properties: {
-          memoryOutputs: { type: "array", items: { type: "object", additionalProperties: true } },
           recommendationOutputs: { type: "array", items: { type: "object", additionalProperties: true } },
           handoffOutput: { type: "object", additionalProperties: true }
         }

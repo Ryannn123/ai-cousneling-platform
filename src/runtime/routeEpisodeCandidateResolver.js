@@ -33,7 +33,7 @@ export class RouteEpisodeCandidateResolver {
 
 export function deriveRouteType(currentTruth, text = "") {
   const hasAcademic = currentTruth.academic.academicResultStatus === "known";
-  const courseKnown = isKnownDirection(currentTruth.direction.courseDirectionStatus) && !NO_COURSE_DIRECTION.test(text);
+  const courseKnown = isKnownCourseDirection(currentTruth.direction.courseDirectionStatus, text) && !NO_COURSE_DIRECTION.test(text);
   const universityKnown = isKnownDirection(currentTruth.direction.universityDirectionStatus) && !NO_UNIVERSITY_DIRECTION.test(text);
   const pathwayKnown = isKnownDirection(currentTruth.direction.pathwayDirectionStatus);
   const pathwayDominant = PATHWAY_UNCERTAINTY.test(text) && (!courseKnown || !universityKnown || pathwayKnown);
@@ -82,4 +82,10 @@ function candidateEvidence(currentTruth, studentMessage) {
 
 function isKnownDirection(status) {
   return Boolean(status && status !== "unknown");
+}
+
+function isKnownCourseDirection(status, text = "") {
+  if (!isKnownDirection(status)) return false;
+  if (status === "considering_some_courses") return NO_UNIVERSITY_DIRECTION.test(text);
+  return true;
 }

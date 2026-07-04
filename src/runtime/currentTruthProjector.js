@@ -280,6 +280,9 @@ function finalizeDirection(projection) {
   projection.direction.courseDirectionStatus = directionStatus(projection.direction.activeCourseDirections, "course");
   projection.direction.universityDirectionStatus = directionStatus(projection.direction.activeUniversityDirections, "university");
   projection.direction.pathwayDirectionStatus = directionStatus(projection.direction.activePathwayDirections, "pathway");
+  applyConfirmedDirectionPreference(projection, "courseOrProgram", projection.direction.activeCourseDirections);
+  applyConfirmedDirectionPreference(projection, "university", projection.direction.activeUniversityDirections);
+  applyConfirmedDirectionPreference(projection, "pathway", projection.direction.activePathwayDirections);
   if (projection.preference.confirmedCounselingPreference?.courseOrProgram) {
     projection.direction.courseDirectionStatus = "confirmed_counseling_course_preference";
   }
@@ -292,6 +295,21 @@ function finalizeDirection(projection) {
   if (projection.preference.preferenceStrength === "none" && hasAnyDirection(projection)) {
     projection.preference.preferenceStrength = strongestPreference(projection);
   }
+}
+
+function applyConfirmedDirectionPreference(projection, preferenceKey, directions) {
+  const confirmed = directions.find((item) => item.status === "confirmed_counseling_preference");
+  if (!confirmed || projection.preference.confirmedCounselingPreference?.[preferenceKey]) return;
+  projection.preference.preferenceStrength = "L4";
+  projection.preference.confirmedCounselingPreference = {
+    ...(projection.preference.confirmedCounselingPreference || {}),
+    [preferenceKey]: confirmed.value,
+    confidence: confirmed.confidence,
+    supportingEventIds: [
+      ...(projection.preference.confirmedCounselingPreference?.supportingEventIds || []),
+      ...confirmed.supportingEventIds
+    ]
+  };
 }
 
 function finalizeRoute(projection) {

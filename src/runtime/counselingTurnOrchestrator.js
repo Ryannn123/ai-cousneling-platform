@@ -177,6 +177,7 @@ export class CounselingTurnOrchestrator {
       finalBoundaryResult: boundaryResult,
       selectedSkillContext: skillSelection
     });
+    const committedOperatingContext = validationResult.acceptedOperatingContext || operatingContext;
     const finalCurrentTruth = await this.memoryStateService.deriveCurrentTruth({
       studentId,
       conversationId,
@@ -186,7 +187,7 @@ export class CounselingTurnOrchestrator {
       conversationId,
       studentMessage,
       previousState,
-      operatingContext,
+      operatingContext: committedOperatingContext,
       validationResult,
       currentTruth: finalCurrentTruth
     });
@@ -210,8 +211,8 @@ export class CounselingTurnOrchestrator {
       },
       routeAudit: {
         routeCandidate,
-        activeRouteEpisode,
-        routeTransitionDecision: activeRouteEpisode.transitionDecision,
+        activeRouteEpisode: committedOperatingContext.activeRouteEpisode,
+        routeTransitionDecision: committedOperatingContext.activeRouteEpisode?.transitionDecision,
         routeOutcomeValidation: validationResult.routeOutcomeValidation
       },
       semanticDeltaAudit: {

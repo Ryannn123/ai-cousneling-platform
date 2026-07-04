@@ -30,7 +30,7 @@ export class RouteEpisodePlanner {
     let evidence = routeCandidate.evidence || [];
     let auditReason = routeCandidate.auditReason;
 
-    if (prior && shouldContinuePriorRoute(prior, routeCandidate, routeSignals, boundaryResult)) {
+    if (prior && shouldContinuePriorRoute(prior, routeCandidate, routeSignals, boundaryResult, currentTruthProjection, studentMessage)) {
       activeRoute = prior.routeType;
       progressState = progressStateForRoute({ routeCandidate: { ...routeCandidate, routeType: activeRoute }, currentTruthProjection, studentMessage });
       auditReason = `Continuing sticky active route ${activeRoute}.`;
@@ -73,7 +73,7 @@ export class RouteEpisodePlanner {
         progressState = "opening";
         evidence = switchSignal.evidence || evidence;
         auditReason = `Student explicitly switched route to ${activeRoute}.`;
-      } else if (confirmationSignal || hasConfirmedPreference(currentTruthProjection)) {
+      } else if (confirmationSignal || hasConfirmedPreferenceForRoute(currentTruthProjection, activeRoute)) {
         decision = "complete_route";
         priority = "active_route_outcome_reached";
         routeOutcomeCandidate = "confirmed_preference";
@@ -139,13 +139,14 @@ export class RouteEpisodePlanner {
   }
 }
 
-function shouldContinuePriorRoute(prior, routeCandidate, routeSignals, boundaryResult) {
+function shouldContinuePriorRoute(prior, routeCandidate, routeSignals, boundaryResult, currentTruthProjection, studentMessage = "") {
   if (!prior?.routeType) return false;
   if (prior.routeType === "initial_route_selection") return false;
   if (prior.progressState === "completed") return false;
   if (boundaryResult?.allowedNextBehavior === "handoff") return false;
-  if (routeSignals.some((signal) => ["student_led_route_switch_signal", "route_confirmation_signal", "route_deferral_signal"].includes(signal.signalType))) return false;
+  if (routeSignals.some((signal) => signal.signalType === "student_led_route_switch_signal")) return false;
   if (routeCandidate.routeType === "handoff_preparation") return false;
+  if (routeCandidate.routeType !== prior.routeType && routeIsResolved(currentTruthProjection, prior.routeType, studentMessage)) return false;
   return true;
 }
 
@@ -153,7 +154,7 @@ function progressStateForRoute({ routeCandidate, currentTruthProjection, student
   if (routeCandidate.routeType === "initial_route_selection") return "opening";
   if (COMPARE.test(studentMessage)) return "comparison";
   if (DEFERRAL.test(studentMessage)) return "deferral_indecision";
-  if (currentTruthProjection.preference.preferenceStrength === "L4") return "confirmed_preference";
+  if (hasConfirmedPreferenceForRoute(currentTruthProjection, routeCandidate.routeType)) return "confirmed_preference";
   if (["R2", "R3"].includes(currentTruthProjection.recommendationReadiness.level)
     && ["university_exploration", "combined_option_validation"].includes(routeCandidate.routeType)) {
     return "recommendation_ready";
@@ -165,17 +166,43 @@ function hasKnowledgeDetour(runtimeSignals, studentMessage) {
   return runtimeSignals.some((signal) => signal.kind === "knowledge_need") || FACTUAL_DETOUR.test(studentMessage);
 }
 
-function hasConfirmedPreference(currentTruth) {
-  return currentTruth.preference.preferenceStrength === "L4"
-    && Boolean(currentTruth.preference.confirmedCounselingPreference);
+function hasConfirmedPreferenceForRoute(currentTruth, routeType) {
+  if (currentTruth.preference.preferenceStrength !== "L4") return false;
+  if (currentTruth.routeEpisodeProjection?.latestRouteOutcomeByRoute?.[routeType]?.outcome === "confirmed_preference") return false;
+  const preference = currentTruth.preference.confirmedCounselingPreference || {};
+  if (routeType === "course_exploration") return Boolean(preference.courseOrProgram);
+  if (routeType === "university_exploration") return Boolean(preference.university);
+  if (routeType === "pathway_exploration") return Boolean(preference.pathway);
+  if (routeType === "course_exploration_within_university_context") return Boolean(preference.courseOrProgram);
+  if (routeType === "combined_option_validation") return Boolean(preference.courseOrProgram && preference.university);
+  return false;
 }
 
 function activeDirections(currentTruth) {
   return {
-    ...(currentTruth.direction.activeCourseDirections[0]?.value ? { course: currentTruth.direction.activeCourseDirections[0].value } : {}),
-    ...(currentTruth.direction.activeUniversityDirections[0]?.value ? { university: currentTruth.direction.activeUniversityDirections[0].value } : {}),
-    ...(currentTruth.direction.activePathwayDirections[0]?.value ? { pathway: currentTruth.direction.activePathwayDirections[0].value } : {})
+    ...(bestDirection(currentTruth.direction.activeCourseDirections)?.value ? { course: bestDirection(currentTruth.direction.activeCourseDirections).value } : {}),
+    ...(bestDirection(currentTruth.direction.activeUniversityDirections)?.value ? { university: bestDirection(currentTruth.direction.activeUniversityDirections).value } : {}),
+    ...(bestDirection(currentTruth.direction.activePathwayDirections)?.value ? { pathway: bestDirection(currentTruth.direction.activePathwayDirections).value } : {})
   };
+}
+
+function routeIsResolved(currentTruth, routeType, studentMessage = "") {
+  if (currentTruth.routeEpisodeProjection?.latestRouteOutcomeByRoute?.[routeType]) return true;
+  if (routeType === "course_exploration") {
+    return currentTruth.direction.courseDirectionStatus === "confirmed_counseling_course_preference"
+      && /\b(compare|university|universities|campus|shortlist)\b/i.test(studentMessage);
+  }
+  if (routeType === "university_exploration") return currentTruth.direction.universityDirectionStatus === "confirmed_counseling_university_preference";
+  if (routeType === "pathway_exploration") return currentTruth.direction.pathwayDirectionStatus === "confirmed_counseling_pathway_preference";
+  return false;
+}
+
+function bestDirection(directions = []) {
+  return [...directions].sort((a, b) => directionRank(b.status) - directionRank(a.status)).at(0);
+}
+
+function directionRank(status) {
+  return { confirmed_counseling_preference: 3, preferred: 2, considering: 1 }[status] || 0;
 }
 
 function boundaryEvidence(boundaryResult, studentMessage) {

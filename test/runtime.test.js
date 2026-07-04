@@ -465,6 +465,22 @@ test("weak interest is not over-promoted to confirmed preference", async () => {
   assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "confirmed_counseling_preference"), false);
 });
 
+test("broad course interest stays in course exploration until university intent is explicit", async () => {
+  const app = testApp();
+  const conversation = await app.createConversation();
+  await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "My SPM result is 5 credits."
+  });
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "Psychology sounds interesting."
+  });
+
+  assert.equal(result.routeCandidate.routeType, "course_exploration");
+  assert.equal(result.operatingContext.activeRouteEpisode.routeType, "course_exploration");
+});
+
 test("phase 4 extracts course university and pathway considering fields", async () => {
   const app = testApp();
   const conversation = await app.createConversation();
@@ -1224,6 +1240,95 @@ test("student-led route switch creates route outcome memory with evidence", asyn
   assert.equal(result.currentTruth.routeEpisodeProjection.routeSwitchHistory[0].value.nextRouteCandidate, "university_exploration");
 });
 
+test("confirmed course route advances to university comparison without stale active direction", async () => {
+  const app = testApp();
+  const conversation = await app.createConversation();
+  await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I got 5 credits and I don't know what course or university I want yet."
+  });
+
+  const preference = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "Psychology is my choice for now."
+  });
+  assert.equal(preference.operatingContext.activeRouteEpisode.routeOutcomeCandidate, "confirmed_preference");
+  assert.equal(preference.validationResult.acceptedOutputs.routeOutcomeOutput.value.outcome, "confirmed_preference");
+
+  const comparison = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "Compare different universities that offer Psychology."
+  });
+
+  assert.equal(comparison.routeCandidate.routeType, "university_exploration");
+  assert.equal(comparison.operatingContext.activeRouteEpisode.routeType, "university_exploration");
+  assert.equal(comparison.operatingContext.activeRouteEpisode.progressState, "comparison");
+  assert.equal(comparison.operatingContext.activeRouteEpisode.activeDirections.course, "Psychology");
+  assert.equal(comparison.operatingContext.activeStudentDirection.courseOrProgram, "Psychology");
+  assert.equal(comparison.validationResult.acceptedOutputs.routeOutcomeOutput, undefined);
+  assert.deepEqual(comparison.validationResult.acceptedOutputs.memoryOutputs, []);
+  assert.equal(comparison.runtimeState.memoryOutputs.length, 0);
+});
+
+test("rejected route confirmation signal does not commit inferred university route", async () => {
+  const baseExtractor = testSemanticDeltaExtractor();
+  const app = testApp({
+    aiSemanticDeltaExtractor: {
+      provider: "mock",
+      model: "route-regression",
+      async extract(turnInput, fastBoundarySignals = []) {
+        const raw = await baseExtractor.extract(turnInput, fastBoundarySignals);
+        if (/systems and development side of technology/i.test(turnInput.studentMessage)) {
+          raw.runtimeOnlySignalCandidates.push({
+            ...baseSignal(turnInput.studentMessage, "systems and development side of technology", "high", "over-eager confirmation"),
+            kind: "route_episode",
+            signalType: "route_confirmation_signal",
+            routeHint: "university_exploration"
+          });
+        }
+        return raw;
+      }
+    }
+  });
+  const conversation = await app.createConversation();
+  await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I got 5 credits and I don't know what course or university I want yet."
+  });
+
+  const result = await app.handleTurn({
+    conversationId: conversation.conversationId,
+    studentMessage: "I prefer the systems and development side of technology."
+  });
+
+  assert.equal(result.validationResult.routeOutcomeValidation.status, "reject");
+  assert.equal(result.operatingContext.activeRouteEpisode.routeType, "course_exploration");
+  assert.equal(result.operatingContext.activeRouteEpisode.progressState, "decision_support");
+  assert.equal(result.operatingContext.activeRouteEpisode.routeOutcomeCandidate, undefined);
+  assert.equal(result.runtimeState.operatingContext.activeRouteEpisode.routeType, "course_exploration");
+});
+
+test("current truth promotes confirmed direction events into confirmed counseling preference", () => {
+  const currentTruth = new CurrentTruthProjector().project({
+    studentId: "student-confirmed-direction",
+    events: [{
+      eventId: "event-1",
+      studentId: "student-confirmed-direction",
+      createdAt: "2026-07-04T08:00:00.000Z",
+      category: "course_direction",
+      operation: "add_new",
+      payload: { value: "Business Information Systems", status: "confirmed_counseling_preference" },
+      confidence: "high",
+      evidence: [{ quote: "i want Business Information Systems" }],
+      officialTruthBoundary: { isOfficialTruth: false }
+    }]
+  });
+
+  assert.equal(currentTruth.preference.preferenceStrength, "L4");
+  assert.equal(currentTruth.preference.confirmedCounselingPreference.courseOrProgram, "Business Information Systems");
+  assert.equal(currentTruth.direction.courseDirectionStatus, "confirmed_counseling_course_preference");
+});
+
 test("shortlist and recommendation alone do not create route outcome memory", async () => {
   const app = testApp();
   const conversation = await app.createConversation();
@@ -1407,7 +1512,7 @@ test("phase 12 scenario reaches recommendation, comparison, preference, handoff,
   });
   assert.equal(preference.operatingContext.activeRouteEpisode.progressState, "confirmed_preference");
   assert.equal(preference.validationResult.acceptedOutputs.routeOutcomeOutput.value.outcome, "confirmed_preference");
-  assert.equal(preference.validationResult.acceptedOutputs.memoryOutputs[0].type, "confirmed_counseling_preference");
+  assert.deepEqual(preference.validationResult.acceptedOutputs.memoryOutputs, []);
 
   const handoff = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -1484,7 +1589,7 @@ test("detour answer resumes normal journey on the next turn", async () => {
   assert.equal(resumed.skillSelection.selectedRuntimeSkill.name, "shortlist-comparison");
 });
 
-test("unknown factual detour is caveated and recorded as low-confidence knowledge gap", async () => {
+test("unknown factual detour is caveated without committing AI memory output", async () => {
   const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
@@ -1492,11 +1597,10 @@ test("unknown factual detour is caveated and recorded as low-confidence knowledg
     studentMessage: "What is the fee for Medicine in London?"
   });
 
-  const detourOutput = result.runtimeState.memoryOutputs.find((output) => output.type === "factual_detour_answered");
   assert.equal(result.operatingContext.activeRouteEpisode.progressState, "detour_resume");
   assert.match(result.finalResponse, /do not have a verified catalog fact/i);
-  assert.equal(detourOutput.confidence, "low");
-  assert.equal(detourOutput.value.answerable, false);
+  assert.deepEqual(result.validationResult.acceptedOutputs.memoryOutputs, []);
+  assert.equal(result.runtimeState.memoryOutputs.length, 0);
 });
 
 test("human-requested support produces red-zone handoff", async () => {
@@ -1642,7 +1746,7 @@ test("gemini provider calls interactions and parses JSON output", async () => {
               text: JSON.stringify({
                 response: { studentMessage: "Gemini response", responseIntent: "answer" },
                 proposedContextUpdate: {},
-                proposedOutputs: { memoryOutputs: [], recommendationOutputs: [] },
+                proposedOutputs: { recommendationOutputs: [] },
                 validationFlags: {
                   needsClarification: false,
                   boundarySensitive: false,
@@ -1672,6 +1776,8 @@ test("gemini provider calls interactions and parses JSON output", async () => {
     assert.equal(capturedRequest.body.response_format.mime_type, "application/json");
     assert.deepEqual(capturedRequest.body.response_format.schema.required, ["response", "proposedContextUpdate", "proposedOutputs", "validationFlags"]);
     assert.deepEqual(capturedRequest.body.response_format.schema.properties.response.required, ["studentMessage", "responseIntent"]);
+    assert.deepEqual(capturedRequest.body.response_format.schema.properties.proposedOutputs.required, ["recommendationOutputs"]);
+    assert.equal(capturedRequest.body.response_format.schema.properties.proposedOutputs.properties.memoryOutputs, undefined);
     assert.equal(result.response.studentMessage, "Gemini response");
   } finally {
     globalThis.fetch = originalFetch;

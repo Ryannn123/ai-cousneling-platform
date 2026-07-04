@@ -124,15 +124,23 @@ function currentTruthSummary(currentTruth) {
 
 function activeDirectionFromCurrentTruth(currentTruth) {
   const preference = currentTruth.preference.confirmedCounselingPreference;
-  const course = preference?.courseOrProgram || currentTruth.direction.activeCourseDirections[0]?.value;
-  const university = preference?.university || currentTruth.direction.activeUniversityDirections[0]?.value;
-  const pathway = preference?.pathway || currentTruth.direction.activePathwayDirections[0]?.value;
+  const course = preference?.courseOrProgram || bestDirection(currentTruth.direction.activeCourseDirections)?.value;
+  const university = preference?.university || bestDirection(currentTruth.direction.activeUniversityDirections)?.value;
+  const pathway = preference?.pathway || bestDirection(currentTruth.direction.activePathwayDirections)?.value;
   if (!course && !university && !pathway) return undefined;
   return {
     ...(course ? { courseOrProgram: course } : {}),
     ...(university ? { university } : {}),
     ...(pathway ? { pathway } : {})
   };
+}
+
+function bestDirection(directions = []) {
+  return [...directions].sort((a, b) => directionRank(b.status) - directionRank(a.status)).at(0);
+}
+
+function directionRank(status) {
+  return { confirmed_counseling_preference: 3, preferred: 2, considering: 1 }[status] || 0;
 }
 
 function legacyMigration(route, previous) {
