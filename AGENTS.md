@@ -38,6 +38,10 @@ Use the minimum code that solves the problem. Do not add features beyond what wa
 
 Touch only what the request requires. Do not improve adjacent code, comments, or formatting. Match existing style, even when another style might be preferable. Remove only imports, variables, functions, or files made unused by your own changes. Mention unrelated dead code instead of deleting it.
 
+### Refactoring
+
+When refactoring code, optimize for the new design directly. Do not leave legacy compatibility paths, aliases, wrappers, duplicate APIs, or fallback behavior solely to preserve the pre-refactor implementation.
+
 ### Goal-Driven Execution
 
 Turn tasks into verifiable goals and loop until checked. For multi-step tasks, state a brief plan with verification for each step, for example:

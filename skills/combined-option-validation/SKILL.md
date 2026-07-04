@@ -21,10 +21,6 @@ applies_to_actions:
 applies_to_zones:
   - green
   - yellow
-counselor_response_modes:
-  - standard
-  - decision_support
-  - milestone_confirmation
 allowed_memory_outputs:
   - exploration_prompted
   - confirmed_counseling_preference

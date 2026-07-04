@@ -1,19 +1,12 @@
-import { FastBoundarySignalScanner } from "./fastBoundarySignalScanner.js";
 import { BoundaryResolver } from "./boundaryResolver.js";
 
 export class BoundaryEngine {
-  constructor({ scanner = new FastBoundarySignalScanner(), resolver = new BoundaryResolver() } = {}) {
-    this.scanner = scanner;
+  constructor({ resolver = new BoundaryResolver() } = {}) {
     this.resolver = resolver;
   }
 
-  scan(turnInput) {
-    return this.scanner.scan(turnInput.studentMessage || "");
-  }
-
-  evaluate(turnInput, { fastBoundarySignals, acceptedSemanticDelta } = {}) {
+  evaluate(turnInput, { acceptedSemanticDelta } = {}) {
     return this.resolver.resolve({
-      fastBoundarySignals: fastBoundarySignals || this.scan(turnInput),
       acceptedSemanticDelta
     });
   }

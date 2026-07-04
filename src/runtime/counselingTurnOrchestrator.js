@@ -75,11 +75,9 @@ export class CounselingTurnOrchestrator {
       currentTruthBeforeTurn: currentTruthForExtraction(currentTruthBeforeTurn)
     };
 
-    const fastBoundarySignals = this.boundaryEngine.scan(turnInput);
-    const rawSemanticDelta = await this.aiSemanticDeltaExtractor.extract(turnInput, fastBoundarySignals);
+    const rawSemanticDelta = await this.aiSemanticDeltaExtractor.extract(turnInput);
     const acceptedSemanticDelta = this.semanticDeltaValidator.validate({
       rawSemanticDelta,
-      fastBoundarySignals,
       turnInput,
       extractor: this.aiSemanticDeltaExtractor
     });
@@ -99,7 +97,7 @@ export class CounselingTurnOrchestrator {
       previousOperatingContext: previousState.operatingContext,
       studentMessage
     });
-    const boundaryResult = this.boundaryEngine.evaluate(turnInput, { fastBoundarySignals, acceptedSemanticDelta });
+    const boundaryResult = this.boundaryEngine.evaluate(turnInput, { acceptedSemanticDelta });
     const activeRouteEpisode = this.routeEpisodePlanner.plan({
       boundaryResult,
       routeCandidate,
@@ -225,9 +223,7 @@ export class CounselingTurnOrchestrator {
         downgradedCandidates: acceptedSemanticDelta.downgradedCandidates,
         semanticDeltaValidationEvents: acceptedSemanticDelta.validationEvents,
         acceptedStudentPostureSignal: acceptedSemanticDelta.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "student_posture"),
-        fastBoundarySignals,
         boundaryResolutionInput: {
-          fastBoundarySignals,
           acceptedBoundaryRuntimeSignals: acceptedSemanticDelta.acceptedRuntimeOnlySignals.filter((signal) => signal.kind === "boundary"),
           readinessToRegisterSignal: acceptedSemanticDelta.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "boundary" && signal.type === "ready_to_apply_or_register"),
           ambiguousProceedSignal: acceptedSemanticDelta.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "boundary" && signal.type === "ambiguous_proceed_language")
@@ -241,7 +237,6 @@ export class CounselingTurnOrchestrator {
       runtimeState,
       rawSemanticDelta,
       acceptedSemanticDelta,
-      fastBoundarySignals,
       boundaryResult,
       operatingContext: commitResult.committedContext,
       currentTruth: finalCurrentTruth,

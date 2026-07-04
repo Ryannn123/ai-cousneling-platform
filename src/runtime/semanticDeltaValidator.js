@@ -12,7 +12,7 @@ const OFFICIAL_MEMORY = /\b(application submitted|registration completed|registe
 const QUALITY_TYPES = new Set(["concern_or_blocker", "constraint", "preference", "influence_or_context", "other"]);
 
 export class SemanticDeltaValidator {
-  validate({ rawSemanticDelta, fastBoundarySignals = [], turnInput, extractor = {}, skillContext } = {}) {
+  validate({ rawSemanticDelta, turnInput, extractor = {}, skillContext } = {}) {
     const rejectedCandidates = [];
     const downgradedCandidates = [];
     const validationEvents = [];
@@ -24,7 +24,6 @@ export class SemanticDeltaValidator {
     validateFlowDrivingDeltas(acceptedMemoryDeltas.flowDrivingDeltas, rejectedCandidates, downgradedCandidates, validationEvents);
     validateQualityDeltas(acceptedMemoryDeltas.qualityEnhancingDeltas, rejectedCandidates, validationEvents);
     validateRuntimeOnlySignals(acceptedRuntimeOnlySignals, rejectedCandidates, validationEvents);
-    preserveFastBoundarySignals(acceptedRuntimeOnlySignals, fastBoundarySignals, validationEvents);
     preserveHumanHelpPosture(acceptedRuntimeOnlySignals, validationEvents);
 
     if (acceptedRuntimeOnlySignals.some((signal) => signal.kind === "boundary" && signal.type === "ambiguous_proceed_language")) {
@@ -177,19 +176,6 @@ function validateConfirmedPreference(flow, label, listKey, rejectedCandidates, d
   }
 }
 
-function preserveFastBoundarySignals(signals, fastBoundarySignals, validationEvents) {
-  for (const fastSignal of fastBoundarySignals) {
-    if (!signals.some((signal) => signal.kind === "boundary" && signal.type === fastSignal.type)) {
-      signals.push(fromFastBoundarySignal(fastSignal));
-      validationEvents.push({
-        type: "boundary_signal_preserved",
-        severity: "warning",
-        message: `Fast boundary signal preserved: ${fastSignal.type}.`
-      });
-    }
-  }
-}
-
 function preserveHumanHelpPosture(signals, validationEvents) {
   const posture = signals.find((signal) => signal.kind === "student_posture" && signal.posture === "human_help_seeking");
   if (posture && !signals.some((signal) => signal.kind === "boundary" && signal.type === "human_requested_support")) {
@@ -227,20 +213,6 @@ function validateCandidate(path, candidate, rejectedCandidates, validationEvents
   }
   validationEvents.push({ type: "evidence_validated", severity: "info", message: `${path} has evidence.` });
   return true;
-}
-
-function fromFastBoundarySignal(signal) {
-  return {
-    kind: "boundary",
-    type: signal.type,
-    triggerType: signal.triggerType,
-    severityCandidate: signal.severityCandidate,
-    recommendedBehavior: signal.recommendedBehavior === "clarify_once" ? "clarify_once" : "handoff",
-    confidence: "high",
-    evidence: [{ quote: signal.matchedText }],
-    source: "current_message",
-    promotionRisk: signal.severityCandidate === "red" ? "official_action_risk" : "requires_confirmation"
-  };
 }
 
 function buildMetadata(turnInput = {}, extractor = {}, skillContext) {

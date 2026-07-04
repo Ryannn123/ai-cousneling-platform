@@ -14,9 +14,9 @@ export class AISemanticDeltaExtractor {
     this.model = model;
   }
 
-  async extract(turnInput, fastBoundarySignals = []) {
+  async extract(turnInput) {
     if (!this.hasApiKey()) throw new Error("AI semantic delta API key is required for extraction");
-    return this.extractLive(turnInput, fastBoundarySignals);
+    return this.extractLive(turnInput);
   }
 
   async extractRaw(turnInput) {
@@ -25,17 +25,17 @@ export class AISemanticDeltaExtractor {
     return this.extractOpenAiRaw(turnInput);
   }
 
-  async extractLive(turnInput, fastBoundarySignals) {
-    if (this.provider === "gemini") return this.extractGeminiLive(turnInput, fastBoundarySignals);
-    return this.extractOpenAiLive(turnInput, fastBoundarySignals);
+  async extractLive(turnInput) {
+    if (this.provider === "gemini") return this.extractGeminiLive(turnInput);
+    return this.extractOpenAiLive(turnInput);
   }
 
   hasApiKey() {
     return this.provider === "gemini" ? Boolean(this.geminiApiKey) : Boolean(this.openaiApiKey);
   }
 
-  async extractOpenAiLive(turnInput, fastBoundarySignals) {
-    const text = await this.fetchOpenAiSemanticDeltaText(turnInput, fastBoundarySignals);
+  async extractOpenAiLive(turnInput) {
+    const text = await this.fetchOpenAiSemanticDeltaText(turnInput);
     return parseSemanticDelta(text, "OpenAI", turnInput);
   }
 
@@ -44,7 +44,7 @@ export class AISemanticDeltaExtractor {
     return parseRawSemanticDelta(text, "OpenAI");
   }
 
-  async fetchOpenAiSemanticDeltaText(turnInput, fastBoundarySignals) {
+  async fetchOpenAiSemanticDeltaText(turnInput) {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -60,7 +60,7 @@ export class AISemanticDeltaExtractor {
           },
           {
             role: "user",
-            content: JSON.stringify(semanticDeltaInput(turnInput, fastBoundarySignals))
+            content: JSON.stringify(semanticDeltaInput(turnInput))
           }
         ],
         text: {
@@ -80,9 +80,9 @@ export class AISemanticDeltaExtractor {
     return text;
   }
 
-  async extractGeminiLive(turnInput, fastBoundarySignals) {
+  async extractGeminiLive(turnInput) {
     const url = new URL("https://generativelanguage.googleapis.com/v1beta/interactions");
-    const request = geminiSemanticDeltaRequest(turnInput, fastBoundarySignals, this.model);
+    const request = geminiSemanticDeltaRequest(turnInput, this.model);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.geminiApiKey },
@@ -94,7 +94,7 @@ export class AISemanticDeltaExtractor {
 
   async extractGeminiRaw(turnInput) {
     const url = new URL("https://generativelanguage.googleapis.com/v1beta/interactions");
-    const request = geminiSemanticDeltaRequest(turnInput, undefined, this.model);
+    const request = geminiSemanticDeltaRequest(turnInput, this.model);
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.geminiApiKey },
@@ -108,11 +108,11 @@ export class AISemanticDeltaExtractor {
   }
 }
 
-function geminiSemanticDeltaRequest(turnInput, fastBoundarySignals, model) {
+function geminiSemanticDeltaRequest(turnInput, model) {
   return {
     model: cleanGeminiModelName(model),
     system_instruction: "Extract SemanticDeltaResult JSON. Include short evidence quotes for every candidate. currentTruthBeforeTurn is read-only context for interpreting the new student message. Do not re-emit existing memory as a new delta unless the student restates, corrects, rejects, or changes it.",
-    input: JSON.stringify(semanticDeltaInput(turnInput, fastBoundarySignals)),
+    input: JSON.stringify(semanticDeltaInput(turnInput)),
     store: false,
     response_format: {
       type: "text",
@@ -171,14 +171,13 @@ function parseRawSemanticDelta(text, providerName) {
   }
 }
 
-function semanticDeltaInput(turnInput, fastBoundarySignals) {
+function semanticDeltaInput(turnInput) {
   const input = { ...turnInput };
   delete input.conversationId;
   delete input.turnId;
   delete input.messageId;
   delete input.previousRuntimeState;
-  if (fastBoundarySignals === undefined) return input;
-  return { ...input, fastBoundarySignals };
+  return input;
 }
 
 function hydrateSemanticDelta(raw, turnInput = {}) {

@@ -19,11 +19,11 @@ const REASONS_BY_TYPE = {
 };
 
 export class BoundaryResolver {
-  resolve({ fastBoundarySignals = [], acceptedSemanticDelta } = {}) {
+  resolve({ acceptedSemanticDelta } = {}) {
     const acceptedBoundarySignals = (acceptedSemanticDelta?.acceptedRuntimeOnlySignals || [])
       .filter((signal) => signal.kind === "boundary");
     const readiness = acceptedBoundarySignals.find((signal) => signal.type === "ready_to_apply_or_register");
-    const boundarySignals = [...fastBoundarySignals, ...acceptedBoundarySignals];
+    const boundarySignals = [...acceptedBoundarySignals];
     if (readiness && !boundarySignals.some((signal) => signal.type === "ready_to_apply_or_register")) {
       boundarySignals.push({
         type: "ready_to_apply_or_register",

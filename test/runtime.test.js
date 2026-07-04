@@ -41,8 +41,8 @@ function testSemanticDeltaExtractor() {
   return {
     provider: "mock",
     model: "test",
-    async extract(turnInput, fastBoundarySignals = []) {
-      return mockSemanticDelta(turnInput, fastBoundarySignals);
+    async extract(turnInput) {
+      return mockSemanticDelta(turnInput);
     }
   };
 }
@@ -69,7 +69,6 @@ async function phase5MemoryHarness() {
 function acceptedDeltaFromRaw(rawSemanticDelta, ids = {}) {
   return new SemanticDeltaValidator().validate({
     rawSemanticDelta,
-    fastBoundarySignals: [],
     turnInput: {
       conversationId: ids.conversationId || "conversation-1",
       turnId: ids.turnId || "turn-1",
@@ -86,7 +85,7 @@ const TEST_UNIVERSITIES = ["demo metropolitan university", "demo valley universi
 const TEST_NO_COURSE_DIRECTION = /\b(don'?t know what course|do not know what course|no course|not sure what to study|don't know what to study|do not know what to study)\b/i;
 const TEST_NO_UNIVERSITY_DIRECTION = /\b(don'?t know (which )?university|do not know (which )?university|no university|not sure which university|haven'?t chosen.*university|have not chosen.*university|what course or university)\b/i;
 
-function mockSemanticDelta(turnInput, fastBoundarySignals) {
+function mockSemanticDelta(turnInput) {
   const text = turnInput.studentMessage || "";
   const flowDrivingDeltas = {
     academicResults: arrayOf(academicResultDelta(text)),
@@ -103,7 +102,7 @@ function mockSemanticDelta(turnInput, fastBoundarySignals) {
       qualityEnhancingDeltas: qualityDeltas(text)
     },
     runtimeOnlySignalCandidates: [
-      ...boundarySignals(text, fastBoundarySignals),
+      ...boundarySignals(text),
       ...knowledgeNeeds(text),
       ...arrayOf(postureSignal(text, flowDrivingDeltas)),
       ...ambiguitySignals(text),
@@ -168,15 +167,28 @@ function academicResultDelta(text) {
   return match ? { ...baseDelta(text, match[0]), value: match[0].trim() } : undefined;
 }
 
-function boundarySignals(text, fastBoundarySignals = []) {
-  return fastBoundarySignals.map((signal) => ({
-    ...baseSignal(text, signal.matchedText, "high", signal.severityCandidate === "red" ? "official_action_risk" : "requires_confirmation"),
-    kind: "boundary",
-    type: signal.type,
-    triggerType: signal.triggerType,
-    severityCandidate: signal.severityCandidate,
-    recommendedBehavior: signal.recommendedBehavior === "clarify_once" ? "clarify_once" : "handoff"
-  }));
+function boundarySignals(text) {
+  const groups = [
+    ["ready_to_apply_or_register", "H1", "red", "handoff", /\b(apply now|ready to apply|register me|ready to register|start application|enroll me|enrol me)\b/i],
+    ["official_action_request", "H2", "red", "handoff", /\b(submit my application|submit.*documents?|update.*status|update.*crm|confirm.*registration)\b/i],
+    ["payment_or_seat_request", "H3", "red", "handoff", /\b(pay|payment|deposit|invoice|receipt|reserve.*seat|secure.*intake|confirm.*place|enroll now|enrol now)\b/i],
+    ["exception_or_waiver_request", "H4", "red", "handoff", /\b(exception|appeal|waiver|skip.*requirement|still enter|complex eligibility)\b/i],
+    ["sensitive_context", "H5", "red", "handoff", /\b(visa issue|legal issue|disability|accommodation|financial hardship|medical hardship|guardian consent|confidential document)\b/i],
+    ["human_requested_support", "H6", "red", "handoff", /\b(human counselor|human counsellor|real person|someone call me|talk to.*human|staff|agent|do not trust ai)\b/i],
+    ["ambiguous_proceed_language", undefined, "yellow", "clarify_once", /\b(go ahead|proceed|next step|let'?s do this|continue with (it|this|this option)|move forward)\b/i]
+  ];
+  return groups.flatMap(([type, triggerType, severityCandidate, recommendedBehavior, pattern]) => {
+    const match = text.match(pattern);
+    if (!match) return [];
+    return [{
+      ...baseSignal(text, match[0], "high", severityCandidate === "red" ? "official_action_risk" : "requires_confirmation"),
+      kind: "boundary",
+      type,
+      triggerType,
+      severityCandidate,
+      recommendedBehavior
+    }];
+  });
 }
 
 function routeEpisodeSignals(text) {
@@ -396,17 +408,25 @@ function executionResult(responseIntent, studentMessage, proposals, flags) {
 test("boundary detection catches apply/register/payment/official action language", () => {
   const engine = new BoundaryEngine();
   for (const message of ["I want to apply now", "Can you register me?", "How do I pay?", "Can you reserve my seat?"]) {
-    const result = engine.evaluate({ studentMessage: message });
+    const result = engine.evaluate({ studentMessage: message }, { acceptedSemanticDelta: acceptedBoundaryDelta(message) });
     assert.equal(result.finalZone, "red");
     assert.equal(result.allowedNextBehavior, "handoff");
   }
 });
 
 test("ambiguous proceed language asks for clarification instead of promotion", () => {
-  const result = new BoundaryEngine().evaluate({ studentMessage: "Ok proceed with it" });
+  const message = "Ok proceed with it";
+  const result = new BoundaryEngine().evaluate({ studentMessage: message }, { acceptedSemanticDelta: acceptedBoundaryDelta(message) });
   assert.equal(result.finalZone, "yellow");
   assert.equal(result.allowedNextBehavior, "clarify");
 });
+
+function acceptedBoundaryDelta(studentMessage) {
+  return acceptedDeltaFromRaw({
+    memoryDeltaCandidates: { flowDrivingDeltas: {}, qualityEnhancingDeltas: [] },
+    runtimeOnlySignalCandidates: boundarySignals(studentMessage)
+  }, { studentMessage });
+}
 
 test("validation blocks official-action memory outputs", () => {
   const result = new ValidationPipeline().validate({
@@ -557,7 +577,7 @@ test("student posture signals are accepted as runtime-only signals", async () =>
   ];
 
   for (const [studentMessage, posture] of cases) {
-    const raw = await extractor.extract({ conversationId: "c", turnId: "t", messageId: "m", studentMessage }, []);
+    const raw = await extractor.extract({ conversationId: "c", turnId: "t", messageId: "m", studentMessage });
     const accepted = new SemanticDeltaValidator().validate({ rawSemanticDelta: raw, turnInput: { conversationId: "c", turnId: "t", messageId: "m", studentMessage } });
     assert.equal(accepted.acceptedRuntimeOnlySignals.find((signal) => signal.kind === "student_posture").posture, posture);
   }
@@ -1118,8 +1138,8 @@ test("rejected route confirmation signal does not commit inferred university rou
     aiSemanticDeltaExtractor: {
       provider: "mock",
       model: "route-regression",
-      async extract(turnInput, fastBoundarySignals = []) {
-        const raw = await baseExtractor.extract(turnInput, fastBoundarySignals);
+      async extract(turnInput) {
+        const raw = await baseExtractor.extract(turnInput);
         if (/systems and development side of technology/i.test(turnInput.studentMessage)) {
           raw.runtimeOnlySignalCandidates.push({
             ...baseSignal(turnInput.studentMessage, "systems and development side of technology", "high", "over-eager confirmation"),
@@ -1549,9 +1569,9 @@ test("phase 5 passes current truth before turn into semantic extraction", async 
     aiSemanticDeltaExtractor: {
       provider: "mock",
       model: "test",
-      async extract(turnInput, fastBoundarySignals = []) {
+      async extract(turnInput) {
         currentTruthInputs.push(turnInput.currentTruthBeforeTurn);
-        return mockSemanticDelta(turnInput, fastBoundarySignals);
+        return mockSemanticDelta(turnInput);
       }
     }
   });
