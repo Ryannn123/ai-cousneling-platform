@@ -5,11 +5,9 @@ version: 1.0.0
 artifact_type: playbook
 status: approved
 owner: counseling_team
-applies_to_paths:
-  - P6
-applies_to_states:
-  - S6
-  - S7
+applies_to_progress_states:
+  - confirmed_preference
+  - handoff
 primary_goal: handoff
 related_runtime_skills:
   - preference-confirmation

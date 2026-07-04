@@ -248,7 +248,7 @@ function qualityDeltas(text) {
 
 function postureSignal(text, flowDrivingDeltas) {
   const lower = text.toLowerCase();
-  if (/\b(human counselor|human counsellor|real person|talk to.*human)\b/i.test(text)) return posture(text, "human_help_seeking", "handoff_boundary_check", "handoff_safe");
+  if (/\b(human counselor|human counsellor|real person|talk to.*human)\b/i.test(text)) return posture(text, "human_help_seeking", "prepare_handoff", "handoff_safe");
   if (/\b(just browsing|browsing only|looking around)\b/i.test(text)) return posture(text, "just_browsing", "reassure_and_orient", "reassuring_orientation");
   if (/\b(compare|versus|vs|better|between)\b/i.test(text)) return posture(text, "comparison_oriented", "compare_options", "decision_support");
   if (/\b(my choice|choose|chosen|this option seems best|let'?s go with)\b/i.test(text)) return posture(text, "decision_ready", "confirm_preference", "milestone_confirmation");
@@ -310,10 +310,6 @@ function mockExecution(executionContext) {
       },
       proposedContextUpdate: { primaryCounselingAction: "prepare_handoff", handoffStatus: "prepared", preferenceStrength: "L5" },
       proposedOutputs: {
-        memoryOutputs: [
-          { type: "readiness_to_register_signal", value: { message: studentMessage }, confidence: "high", evidence: studentMessage },
-          { type: "handoff_required", value: { triggerType: boundaryResult.triggerType }, confidence: "high", evidence: boundaryResult.aiBoundaryReason }
-        ],
         recommendationOutputs: [],
         handoffOutput: {
           required: true,
@@ -332,30 +328,29 @@ function mockExecution(executionContext) {
         studentMessage: "When you say proceed, do you mean this is your counseling preference for now, or that you want to apply or register officially?",
         responseIntent: "ask_clarification"
       },
-      proposedContextUpdate: { primaryCounselingAction: "A8" },
-      proposedOutputs: { memoryOutputs: [], recommendationOutputs: [] },
+      proposedContextUpdate: { primaryCounselingAction: "clarify_ambiguity" },
+      proposedOutputs: { recommendationOutputs: [] },
       validationFlags: baseFlags
     };
   }
 
-  if (["A5", "answer_detour"].includes(operatingContext.primaryCounselingAction)) {
+  if (operatingContext.primaryCounselingAction === "answer_detour") {
     const facts = knowledgeContext?.sources?.facts || [];
     const factText = facts.length
       ? facts.map((fact) => `${fact.program} at ${fact.university}: ${fact.location}, about MYR ${fact.annualFeeMyr}/year, ${fact.pathwayDuration}.`).join(" ")
       : knowledgeContext?.sources?.caveat || "I do not have a verified fact for that in the prototype catalog.";
     return executionResult("answer", `${factText} After that, we can return to choosing the best-fit direction.`, {
-      proposedContextUpdate: {},
-      memoryOutputs: [{ type: "factual_detour_answered", value: { answerable: facts.length > 0 }, confidence: facts.length ? "medium" : "low", evidence: studentMessage }]
+      proposedContextUpdate: {}
     }, baseFlags);
   }
 
-  if (["A2", "orient_initial_route"].includes(operatingContext.primaryCounselingAction)) {
+  if (operatingContext.primaryCounselingAction === "orient_initial_route") {
     return executionResult("ask_clarification", "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.", {
-      memoryOutputs: [{ type: "minimum_profile_requested", value: {}, confidence: "high", evidence: "Minimum profile incomplete." }]
+      proposedContextUpdate: {}
     }, baseFlags);
   }
 
-  if (["A6", "recommend_directionally"].includes(operatingContext.primaryCounselingAction)) {
+  if (operatingContext.primaryCounselingAction === "recommend_directionally") {
     return executionResult("recommend", "You already have enough direction for a first counseling recommendation. Based on what you shared, I can make a medium-confidence suggestion and then refine it with one fit question. Psychology could fit if you want people-focused work; Business stays broader if you want management, marketing, or finance flexibility. Which matters more to you now: career direction, budget, or location?", {
       proposedContextUpdate: {},
       recommendationOutputs: [{
@@ -368,23 +363,20 @@ function mockExecution(executionContext) {
     }, baseFlags);
   }
 
-  if (["A7", "compare_shortlist"].includes(operatingContext.primaryCounselingAction)) {
+  if (operatingContext.primaryCounselingAction === "compare_shortlist") {
     return executionResult("compare", "You are comparing directions, so the useful move is to narrow by trade-off instead of adding more options. Psychology is stronger if you want counseling, HR, or human behavior. Business is broader if you want management, marketing, or finance flexibility. Which trade-off matters more to you: focused interest or broader flexibility?", {
-      proposedContextUpdate: {},
-      memoryOutputs: [{ type: "shortlist", value: { options: ["Psychology", "Business"] }, confidence: "medium", evidence: studentMessage }]
+      proposedContextUpdate: {}
     }, baseFlags);
   }
 
-  if (["A9", "confirm_counseling_preference"].includes(operatingContext.primaryCounselingAction)) {
+  if (operatingContext.primaryCounselingAction === "confirm_counseling_preference") {
     return executionResult("confirm_preference", "For counseling purposes, I can treat this as your current preferred direction. This is not an application, registration, payment, enrollment, seat reservation, or CRM update. It just gives us a clear counseling milestone; from here, you can compare one final alternative, take time to think, or speak with a human counselor for official next steps.", {
-      proposedContextUpdate: {},
-      memoryOutputs: [{ type: "confirmed_counseling_preference", value: { direction: studentMessage }, confidence: "medium", evidence: studentMessage }]
+      proposedContextUpdate: {}
     }, baseFlags);
   }
 
   return executionResult("answer", "It sounds like you are still finding the right direction. We can start broad and use your strengths, disliked subjects, and career interest to narrow the route before talking about university fit. What kind of subjects or work do you usually prefer?", {
-    proposedContextUpdate: {},
-    memoryOutputs: [{ type: "exploration_prompted", value: {}, confidence: "medium", evidence: studentMessage }]
+    proposedContextUpdate: {}
   }, baseFlags);
 }
 
@@ -393,7 +385,6 @@ function executionResult(responseIntent, studentMessage, proposals, flags) {
     response: { studentMessage, responseIntent },
     proposedContextUpdate: proposals.proposedContextUpdate || {},
     proposedOutputs: {
-      memoryOutputs: proposals.memoryOutputs || [],
       recommendationOutputs: proposals.recommendationOutputs || [],
       handoffOutput: proposals.handoffOutput
     },
@@ -449,7 +440,7 @@ test("confirmed counseling preference cannot become official registration state"
   assert.equal(preference.operatingContext.activeRouteEpisode.routeOutcomeCandidate, "confirmed_preference");
   assert.equal(preference.operatingContext.preferenceStrength, "L4");
   assert.equal(preference.runtimeState.handoff, null);
-  assert.equal(preference.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
+  assert.equal("memoryOutputs" in preference.runtimeState, false);
 });
 
 test("weak interest is not over-promoted to confirmed preference", async () => {
@@ -462,7 +453,7 @@ test("weak interest is not over-promoted to confirmed preference", async () => {
   assert.notEqual(result.operatingContext.preferenceStrength, "L4");
   assert.equal(flowDrivingDeltas(result).coursesConsidering[0].status, "considering");
   assert.equal(flowDrivingDeltas(result).confirmedCounselingCoursePreferences, null);
-  assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "confirmed_counseling_preference"), false);
+  assert.equal("memoryOutputs" in result.runtimeState, false);
 });
 
 test("broad course interest stays in course exploration until university intent is explicit", async () => {
@@ -541,7 +532,7 @@ test("route episode sends university-first student to course exploration in univ
   assert.equal(result.operatingContext.studentPosture, "university_first");
 });
 
-test("budget ranking and location are quality signals not minimum profile gates", async () => {
+test("budget ranking and location are quality signals not route gates", async () => {
   const app = testApp();
   const conversation = await app.createConversation();
   const result = await app.handleTurn({
@@ -690,7 +681,6 @@ test("openai semantic delta extractor passes SemanticDeltaResult schema", async 
     assert.equal(capturedRequest.body.text.format.schema.properties.conversationId, undefined);
     const flowSchema = capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas;
     const qualityTypeSchema = capturedRequest.body.text.format.schema.properties.memoryDeltaCandidates.properties.qualityEnhancingDeltas.items.properties.type;
-    assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
     assert.equal(flowSchema.properties.confirmedCounselingCoursePreferences.type, "object");
     assert.equal(flowSchema.required.includes("confirmedCounselingCoursePreferences"), false);
     assert.deepEqual(qualityTypeSchema.enum, ["concern_or_blocker", "constraint", "preference", "influence_or_context", "other"]);
@@ -741,7 +731,6 @@ test("gemini semantic delta extractor passes concise JSON schema without platfor
     const flowSchema = capturedRequest.body.response_format.schema.properties.memoryDeltaCandidates.properties.flowDrivingDeltas;
     const qualityTypeSchema = capturedRequest.body.response_format.schema.properties.memoryDeltaCandidates.properties.qualityEnhancingDeltas.items.properties.type;
     assert.equal(flowSchema.properties.coursesConsidering.items.properties.source, undefined);
-    assert.equal(flowSchema.properties.minimumProfileSignals, undefined);
     assert.equal(flowSchema.properties.confirmedCounselingCoursePreferences.type, "object");
     assert.equal(flowSchema.required.includes("confirmedCounselingCoursePreferences"), false);
     assert.match(qualityTypeSchema.description, /not knowing what course/);
@@ -1117,75 +1106,6 @@ test("phase 5 duplicate idempotency keys do not duplicate memory events", async 
   assert.equal(events.length, 1);
 });
 
-test("phase 5 treats AI action memory outputs as audit-only", async () => {
-  const { service, memoryEventStore } = await phase5MemoryHarness();
-  const acceptedSemanticDelta = acceptedDeltaFromRaw(semanticDeltaFixture(), {
-    conversationId: "student-phase5-ai-action",
-    turnId: "turn-phase5-ai-action",
-    messageId: "message-phase5-ai-action"
-  });
-
-  const commit = await service.commitPostResponseAIOutputs({
-    studentId: "student-phase5-ai-action",
-    acceptedSemanticDelta,
-    validatedAIOutput: { response: { studentMessage: "Please share your academic results." } },
-    validationResult: {
-      status: "accepted",
-      acceptedOutputs: {
-        memoryOutputs: [{
-          type: "minimum_profile_requested",
-          value: {},
-          confidence: "high",
-          evidence: "Minimum profile incomplete."
-        }],
-        recommendationOutputs: []
-      }
-    },
-    finalBoundaryResult: { finalZone: "green" },
-    selectedSkillContext: { selectedRuntimeSkill: { name: "minimum-profile-collection" } }
-  });
-  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-ai-action" });
-
-  assert.deepEqual(commit.appendedMemoryEventIds, []);
-  assert.deepEqual(commit.rejectedDeltaIds, []);
-  assert.equal(commit.auditEventIds.length, 1);
-  assert.deepEqual(events, []);
-});
-
-test("phase 5 allows real shortlist output as decision-support memory", async () => {
-  const { service, memoryEventStore } = await phase5MemoryHarness();
-  const acceptedSemanticDelta = acceptedDeltaFromRaw(semanticDeltaFixture(), {
-    conversationId: "student-phase5-shortlist",
-    turnId: "turn-phase5-shortlist",
-    messageId: "message-phase5-shortlist"
-  });
-
-  const commit = await service.commitPostResponseAIOutputs({
-    studentId: "student-phase5-shortlist",
-    acceptedSemanticDelta,
-    validatedAIOutput: { response: { studentMessage: "Here is a shortlist." } },
-    validationResult: {
-      status: "accepted",
-      acceptedOutputs: {
-        memoryOutputs: [{
-          type: "shortlist",
-          value: { options: ["Psychology", "Business"] },
-          confidence: "medium",
-          evidence: "Compare Psychology and Business"
-        }],
-        recommendationOutputs: []
-      }
-    },
-    finalBoundaryResult: { finalZone: "green" },
-    selectedSkillContext: { selectedRuntimeSkill: { name: "shortlist-comparison" } }
-  });
-  const events = await memoryEventStore.getEventsForProjection({ studentId: "student-phase5-shortlist" });
-
-  assert.equal(commit.appendedMemoryEventIds.length, 1);
-  assert.equal(events[0].category, "decision_support");
-  assert.equal(events[0].payload.type, "shortlist");
-});
-
 test("route outcome memory records accepted fallback without promoting to L4", async () => {
   const app = testApp();
   const conversation = await app.createConversation();
@@ -1266,8 +1186,8 @@ test("confirmed course route advances to university comparison without stale act
   assert.equal(comparison.operatingContext.activeRouteEpisode.activeDirections.course, "Psychology");
   assert.equal(comparison.operatingContext.activeStudentDirection.courseOrProgram, "Psychology");
   assert.equal(comparison.validationResult.acceptedOutputs.routeOutcomeOutput, undefined);
-  assert.deepEqual(comparison.validationResult.acceptedOutputs.memoryOutputs, []);
-  assert.equal(comparison.runtimeState.memoryOutputs.length, 0);
+  assert.equal("memoryOutputs" in comparison.validationResult.acceptedOutputs, false);
+  assert.equal("memoryOutputs" in comparison.runtimeState, false);
 });
 
 test("rejected route confirmation signal does not commit inferred university route", async () => {
@@ -1372,7 +1292,6 @@ test("phase 5 duplicate route outcome idempotency keys do not duplicate memory e
   const validationResult = {
     status: "accepted",
     acceptedOutputs: {
-      memoryOutputs: [],
       recommendationOutputs: [],
       routeOutcomeOutput: {
         type: "route_outcome",
@@ -1512,7 +1431,7 @@ test("phase 12 scenario reaches recommendation, comparison, preference, handoff,
   });
   assert.equal(preference.operatingContext.activeRouteEpisode.progressState, "confirmed_preference");
   assert.equal(preference.validationResult.acceptedOutputs.routeOutcomeOutput.value.outcome, "confirmed_preference");
-  assert.deepEqual(preference.validationResult.acceptedOutputs.memoryOutputs, []);
+  assert.equal("memoryOutputs" in preference.validationResult.acceptedOutputs, false);
 
   const handoff = await app.handleTurn({
     conversationId: conversation.conversationId,
@@ -1545,7 +1464,7 @@ test("ambiguous proceed after recommendation clarifies without confirming prefer
   assert.equal(result.boundaryResult.finalZone, "yellow");
   assert.equal(result.validationResult.status, "clarify");
   assert.equal(result.operatingContext.primaryCounselingAction, "clarify_ambiguity");
-  assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "confirmed_counseling_preference"), false);
+  assert.equal("memoryOutputs" in result.runtimeState, false);
 });
 
 test("official-action wording variants hand off instead of continuing counseling", async () => {
@@ -1561,7 +1480,7 @@ test("official-action wording variants hand off instead of continuing counseling
     assert.equal(result.boundaryResult.finalZone, "red");
     assert.equal(result.validationResult.status, "handoff_override");
     assert.equal(result.runtimeState.handoff.required, true);
-    assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
+    assert.equal("memoryOutputs" in result.runtimeState, false);
   }
 });
 
@@ -1599,8 +1518,8 @@ test("unknown factual detour is caveated without committing AI memory output", a
 
   assert.equal(result.operatingContext.activeRouteEpisode.progressState, "detour_resume");
   assert.match(result.finalResponse, /do not have a verified catalog fact/i);
-  assert.deepEqual(result.validationResult.acceptedOutputs.memoryOutputs, []);
-  assert.equal(result.runtimeState.memoryOutputs.length, 0);
+  assert.equal("memoryOutputs" in result.validationResult.acceptedOutputs, false);
+  assert.equal("memoryOutputs" in result.runtimeState, false);
 });
 
 test("human-requested support produces red-zone handoff", async () => {
@@ -1649,7 +1568,7 @@ test("invalid AI official-action output is blocked before commit", async () => {
   assert.equal(result.validationResult.status, "safe_fallback");
   assert.match(result.finalResponse, /cannot complete application/i);
   assert.equal(result.validationResult.blockedOutputs[0].reason, "official_action_output_not_commit_eligible");
-  assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
+  assert.equal("memoryOutputs" in result.runtimeState, false);
 });
 
 test("phase 5 response retry does not duplicate pre-response memory", async () => {
@@ -1699,7 +1618,7 @@ test("phase 5 response retry does not duplicate pre-response memory", async () =
   assert.equal(result.preResponseMemoryCommitResult.appendedMemoryEventIds.length, 1);
   assert.equal(result.preResponseMemoryCommitResult.ignoredDuplicateEventIds.length, 0);
   assert.equal(result.currentTruth.direction.activeCourseDirections.length, 1);
-  assert.equal(result.runtimeState.memoryOutputs.some((output) => output.type === "registration_completed"), false);
+  assert.equal("memoryOutputs" in result.runtimeState, false);
 });
 
 test("phase 5 passes current truth before turn into semantic extraction", async () => {
@@ -1798,7 +1717,7 @@ test("gemini malformed JSON shape surfaces live provider error", async () => {
                 response: "Please provide your full name and SPM examination year.",
                 status: "continue_normal_counseling",
                 memoryUpdate: {
-                  action: "minimum_profile_requested",
+                  action: "route_orientation_requested",
                   details: "Requested student name and SPM examination year."
                 },
                 nextStep: "Collect missing profile information."
@@ -1813,7 +1732,7 @@ test("gemini malformed JSON shape surfaces live provider error", async () => {
     const client = new AIExecutionClient({ provider: "gemini", geminiApiKey: "test-key", model: "gemini-test" });
     await assert.rejects(client.execute({
       studentMessage: "My SPM results are good.",
-      operatingContext: { primaryCounselingAction: "A2" },
+      operatingContext: { primaryCounselingAction: "orient_initial_route" },
       boundaryResult: { finalZone: "green", allowedNextBehavior: "continue" }
     }), /Gemini returned invalid AIExecutionResult/);
   } finally {

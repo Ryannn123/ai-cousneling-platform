@@ -8,15 +8,6 @@ import { MANDATORY_BOUNDARY_RULES } from "./constants.js";
 const SKILLS_DIR = path.join(process.cwd(), "skills");
 
 const ACTION_TO_SKILL = {
-  A2: "minimum-profile-collection",
-  A3: "interest-exploration",
-  A5: "factual-detour-answering",
-  A6: "directional-recommendation",
-  A7: "shortlist-comparison",
-  A8: "preference-confirmation",
-  A9: "preference-confirmation",
-  A10: "preference-confirmation",
-  A12: "ready-to-register-handoff",
   orient_initial_route: "initial-route-orientation",
   explore_route: "interest-exploration",
   answer_detour: "factual-detour-answering",
@@ -88,8 +79,7 @@ export class SkillControlService {
       ? inventory.loaded.find((skill) => skill.ref.name === selectedRuntimeSkill.name)
       : undefined;
 
-    const playbookName = PROGRESS_TO_PLAYBOOK[operatingContext.activeRouteEpisode?.progressState]
-      || PROGRESS_TO_PLAYBOOK[operatingContext.legacyMigration?.legacyMainState];
+    const playbookName = PROGRESS_TO_PLAYBOOK[operatingContext.activeRouteEpisode?.progressState];
     const selectedPlaybook = playbookName
       ? findCompatible(inventory.loaded, playbookName, "playbook", operatingContext, rejectedCandidates)
       : undefined;
@@ -192,11 +182,11 @@ function findCompatible(loaded, name, artifactType, context, rejectedCandidates,
 
 function compatibilityFailure(metadata, context) {
   const route = context.activeRouteEpisode;
-  const activeRoutes = metadata.route_episode?.applies_to_active_routes || metadata.applies_to_active_routes || legacyRoutesToActiveRoutes(metadata.applies_to_minimum_profile_routes);
+  const activeRoutes = metadata.route_episode?.applies_to_active_routes || metadata.applies_to_active_routes;
   if (Array.isArray(activeRoutes) && activeRoutes.length && route?.routeType && !activeRoutes.includes(route.routeType)) {
     return `route_${route.routeType}_not_allowed`;
   }
-  const progressStates = metadata.route_episode?.applies_to_progress_states || metadata.applies_to_progress_states || legacyStatesToProgressStates(metadata.applies_to_states);
+  const progressStates = metadata.route_episode?.applies_to_progress_states || metadata.applies_to_progress_states;
   if (Array.isArray(progressStates) && progressStates.length && route?.progressState && !progressStates.includes(route.progressState)) {
     return `progress_${route.progressState}_not_allowed`;
   }
@@ -211,11 +201,6 @@ function compatibilityFailure(metadata, context) {
     && !metadata.applies_to_recommendation_readiness.includes(context.recommendationReadiness)) {
     return `readiness_${context.recommendationReadiness}_not_allowed`;
   }
-  if (Array.isArray(metadata.applies_to_profile_completeness)
-    && metadata.applies_to_profile_completeness.length
-    && !metadata.applies_to_profile_completeness.includes(context.currentTruth?.routeReadiness || context.profileCompleteness)) {
-    return `profile_completeness_${context.currentTruth?.routeReadiness || context.profileCompleteness}_not_allowed`;
-  }
   if (Array.isArray(metadata.student_postures_supported)
     && metadata.student_postures_supported.length
     && context.studentPosture
@@ -229,35 +214,6 @@ function compatibilityFailure(metadata, context) {
     return `response_mode_${context.counselorResponseMode}_not_allowed`;
   }
   return null;
-}
-
-function legacyRoutesToActiveRoutes(routes) {
-  if (!Array.isArray(routes)) return undefined;
-  const mapped = routes.flatMap((route) => ({
-    collect_academic_result: ["initial_route_selection"],
-    course_or_pathway_exploration: ["course_exploration", "pathway_exploration"],
-    university_exploration: ["university_exploration"],
-    course_exploration_within_university_context: ["course_exploration_within_university_context"],
-    recommendation_or_validation: ["combined_option_validation", "university_exploration"],
-    comparison_or_shortlist: ["course_exploration", "university_exploration", "pathway_exploration", "combined_option_validation"],
-    handoff_boundary_check: ["handoff_preparation"]
-  }[route] || []));
-  return Array.from(new Set(mapped));
-}
-
-function legacyStatesToProgressStates(states) {
-  if (!Array.isArray(states)) return undefined;
-  const mapped = states.flatMap((state) => ({
-    S1: ["opening"],
-    S3: ["exploration"],
-    S4: ["recommendation_ready"],
-    S5: ["comparison"],
-    S6: ["confirmed_preference"],
-    S7: ["handoff"],
-    S8: ["decision_support", "deferral_indecision"],
-    S9: ["detour_resume"]
-  }[state] || []));
-  return Array.from(new Set(mapped));
 }
 
 function fallbackRef(name, artifactType) {

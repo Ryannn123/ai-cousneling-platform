@@ -18,7 +18,7 @@ export async function writeAuditEvent({ conversationId, studentMessage, boundary
     aiExecutionResult,
     validationResult,
     commitResult,
-    fallbackUsed: aiExecutionResult.proposedOutputs.memoryOutputs?.some((output) => output.type === "ai_core_fallback_used") || false,
+    fallbackUsed: validationResult.status === "safe_fallback",
     evaluationLabels: buildEvaluationLabels(boundaryResult, validationResult, commitResult)
   };
   // ponytail: append-only NDJSON is enough until audit querying needs indexes.

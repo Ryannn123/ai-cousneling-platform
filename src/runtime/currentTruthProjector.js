@@ -41,9 +41,8 @@ function emptyProjection(studentId, events) {
       preferenceStrength: "none"
     },
     route: {
-      minimumProfileCompletion: "incomplete",
-      minimumProfileRoute: "collect_academic_result",
-      missingMinimumProfileFields: ["academic_result", "course_direction_status", "university_direction_status"],
+      routeReadiness: "incomplete",
+      missingRouteFields: ["academic_result", "course_direction_status", "university_direction_status"],
       missingQualityFitSignals: []
     },
     recommendationReadiness: {
@@ -318,20 +317,8 @@ function finalizeRoute(projection) {
   if (!isKnownDirection(projection.direction.courseDirectionStatus)) missing.push("course_direction_status");
   if (!isKnownDirection(projection.direction.universityDirectionStatus)) missing.push("university_direction_status");
 
-  projection.route.missingMinimumProfileFields = missing;
-  projection.route.minimumProfileCompletion = missing.length ? "incomplete" : "minimum_complete";
-
-  if (missing.includes("academic_result")) projection.route.minimumProfileRoute = "collect_academic_result";
-  else if (projection.handoffReadiness.handoffRequired) projection.route.minimumProfileRoute = "handoff_boundary_check";
-  else if (!isKnownDirection(projection.direction.courseDirectionStatus) && !isKnownDirection(projection.direction.universityDirectionStatus)) {
-    projection.route.minimumProfileRoute = "course_or_pathway_exploration";
-  } else if (isKnownDirection(projection.direction.courseDirectionStatus) && !isKnownDirection(projection.direction.universityDirectionStatus)) {
-    projection.route.minimumProfileRoute = "university_exploration";
-  } else if (!isKnownDirection(projection.direction.courseDirectionStatus) && isKnownDirection(projection.direction.universityDirectionStatus)) {
-    projection.route.minimumProfileRoute = "course_exploration_within_university_context";
-  } else {
-    projection.route.minimumProfileRoute = "recommendation_or_validation";
-  }
+  projection.route.missingRouteFields = missing;
+  projection.route.routeReadiness = missing.length ? "incomplete" : "ready";
 }
 
 function finalizeRecommendationReadiness(projection) {

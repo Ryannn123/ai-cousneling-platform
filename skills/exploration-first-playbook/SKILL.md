@@ -5,11 +5,9 @@ version: 1.0.0
 artifact_type: playbook
 status: approved
 owner: counseling_team
-applies_to_paths:
-  - P2
-applies_to_states:
-  - S3
-  - S4
+applies_to_progress_states:
+  - exploration
+  - recommendation_ready
 primary_goal: exploration
 related_runtime_skills:
   - interest-exploration

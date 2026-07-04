@@ -32,8 +32,7 @@ export class OperatingContextManager {
         : "not_required",
       milestoneConfirmationStatus: activeRouteEpisode.progressState === "confirmed_preference" ? "required" : "not_applicable",
       nextBestCounselingMove: nextBestMove(boundaryResult, activeRouteEpisode),
-      validationRequirements: validationRequirements(boundaryResult, activeRouteEpisode),
-      legacyMigration: legacyMigration(activeRouteEpisode, previous)
+      validationRequirements: validationRequirements(boundaryResult, activeRouteEpisode)
     };
     context.counselorResponseMode = responseModeFromRoute(boundaryResult, activeRouteEpisode, text, context.studentPosture, hasAmbiguity);
 
@@ -115,7 +114,7 @@ function currentTruthSummary(currentTruth) {
     universityDirectionStatus: currentTruth.direction.universityDirectionStatus,
     pathwayDirectionStatus: currentTruth.direction.pathwayDirectionStatus,
     routeEpisodeProjection: currentTruth.routeEpisodeProjection,
-    routeReadiness: currentTruth.route.minimumProfileCompletion,
+    routeReadiness: currentTruth.route.routeReadiness,
     preferenceStrength: currentTruth.preference.preferenceStrength,
     recommendationReadiness: currentTruth.recommendationReadiness.level,
     handoffRequired: currentTruth.handoffReadiness.handoffRequired
@@ -141,36 +140,4 @@ function bestDirection(directions = []) {
 
 function directionRank(status) {
   return { confirmed_counseling_preference: 3, preferred: 2, considering: 1 }[status] || 0;
-}
-
-function legacyMigration(route, previous) {
-  return {
-    legacyMainState: legacyState(route),
-    legacyOverlayState: route.detourOverlay ? "S9" : undefined,
-    legacyMinimumProfileRoute: legacyRoute(route.routeType),
-    previousLegacyMainState: previous?.legacyMigration?.legacyMainState || previous?.currentMainState
-  };
-}
-
-function legacyState(route) {
-  if (route.routeType === "initial_route_selection") return "S1";
-  if (route.routeType === "handoff_preparation" || route.progressState === "handoff") return "S7";
-  if (route.progressState === "detour_resume") return "S9";
-  if (route.progressState === "comparison") return "S5";
-  if (route.progressState === "confirmed_preference") return "S6";
-  if (route.progressState === "deferral_indecision") return "S8";
-  if (route.progressState === "recommendation_ready") return "S4";
-  return "S3";
-}
-
-function legacyRoute(routeType) {
-  return {
-    initial_route_selection: "collect_academic_result",
-    course_exploration: "course_or_pathway_exploration",
-    pathway_exploration: "course_or_pathway_exploration",
-    university_exploration: "university_exploration",
-    course_exploration_within_university_context: "course_exploration_within_university_context",
-    combined_option_validation: "recommendation_or_validation",
-    handoff_preparation: "handoff_boundary_check"
-  }[routeType];
 }

@@ -19,7 +19,6 @@ counselor_response_modes:
   - clarify_once
   - standard
 allowed_memory_outputs:
-  - minimum_profile_requested
   - exploration_prompted
   - ai_core_fallback_used
 forbidden_memory_outputs:

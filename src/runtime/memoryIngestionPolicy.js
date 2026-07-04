@@ -1,8 +1,6 @@
 import { OFFICIAL_TRUTH_PATTERN } from "./memoryEventValidator.js";
 
 const HANDOFF_OUTPUTS = new Set(["readiness_to_register_signal", "handoff_required"]);
-const DECISION_SUPPORT_OUTPUTS = new Set(["shortlist"]);
-
 export class MemoryIngestionPolicy {
   preResponseDecisions({ studentId, acceptedSemanticDelta, currentTruthBeforeCommit } = {}) {
     const decisions = [];
@@ -60,15 +58,6 @@ export class MemoryIngestionPolicy {
 
   postResponseDecisions({ studentId, acceptedSemanticDelta, validatedAIOutput, validationResult, finalBoundaryResult, selectedSkillContext } = {}) {
     const decisions = [];
-    for (const [index, output] of (validationResult?.acceptedOutputs?.memoryOutputs || []).entries()) {
-      decisions.push(this.aiOutputDecision({
-        studentId,
-        acceptedSemanticDelta,
-        selectedSkillContext,
-        acceptedDeltaId: `ai.memoryOutputs.${index}`,
-        output
-      }));
-    }
     for (const [index, output] of (validationResult?.acceptedOutputs?.recommendationOutputs || []).entries()) {
       decisions.push(this.aiOutputDecision({
         studentId,
@@ -175,7 +164,7 @@ export class MemoryIngestionPolicy {
       category,
       commitClass: "post_response_ai_produced_output",
       payload: payloadForOutput(output, selectedSkillContext),
-      projectionIntent: category === "decision_support" ? "history_only" : "may_update_current_truth"
+      projectionIntent: "may_update_current_truth"
     });
   }
 
@@ -281,9 +270,7 @@ function valueOf(delta) {
 function categoryForAiOutput(output = {}) {
   if (output.type === "route_outcome") return "route_outcome";
   if (HANDOFF_OUTPUTS.has(output.type)) return "handoff_readiness";
-  if (output.type === "confirmed_counseling_preference") return "counseling_preference";
   if (output.type === "recommendation_shown") return "recommendation_interaction";
-  if (DECISION_SUPPORT_OUTPUTS.has(output.type)) return "decision_support";
   return null;
 }
 

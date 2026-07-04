@@ -5,10 +5,8 @@ version: 1.0.0
 artifact_type: playbook
 status: approved
 owner: counseling_team
-applies_to_paths:
-  - P3
-applies_to_states:
-  - S5
+applies_to_progress_states:
+  - comparison
 primary_goal: comparison
 related_runtime_skills:
   - shortlist-comparison

@@ -112,8 +112,8 @@ function geminiInteractionText(payload) {
   const output = payload?.steps?.filter((step) => step.type === "model_output").at(-1);
   const text = output?.content?.filter((item) => item.type === "text").map((item) => item.text).filter(Boolean).join("");
   if (text) return text;
-  const legacyText = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).filter(Boolean).join("");
-  return legacyText || JSON.stringify(payload);
+  const fallbackText = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).filter(Boolean).join("");
+  return fallbackText || JSON.stringify(payload);
 }
 
 function parseAiExecutionResult(text, providerName) {

@@ -19,7 +19,6 @@ export class ValidationPipeline {
   validate({ aiExecutionResult, boundaryResult, operatingContext, skillSelection, acceptedSemanticDelta }) {
     const validationEvents = [];
     const blockedOutputs = [];
-    const acceptedMemoryOutputs = [];
     const acceptedRecommendationOutputs = [];
     let finalResponse = aiExecutionResult.response.studentMessage;
     let status = "accepted";
@@ -43,7 +42,7 @@ export class ValidationPipeline {
       });
     }
 
-    if (["A2", "orient_initial_route"].includes(operatingContext.primaryCounselingAction) && OLD_MINIMUM_PROFILE_LANGUAGE.test(finalResponse)) {
+    if (operatingContext.primaryCounselingAction === "orient_initial_route" && OLD_MINIMUM_PROFILE_LANGUAGE.test(finalResponse)) {
       finalResponse = "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind.";
       status = "safe_fallback";
       validationEvents.push({
@@ -113,7 +112,6 @@ export class ValidationPipeline {
       finalResponse,
       acceptedContextUpdate: aiExecutionResult.proposedContextUpdate || {},
       acceptedOutputs: {
-        memoryOutputs: acceptedMemoryOutputs,
         recommendationOutputs: acceptedRecommendationOutputs,
         handoffOutput: acceptedHandoffOutput,
         routeOutcomeOutput: routeOutcomeValidation.routeOutcomeOutput
@@ -163,12 +161,5 @@ function contextAfterRejectedRouteOutcome(operatingContext, routeOutcomeValidati
     status: routeOutcomeValidation.status,
     errors: routeOutcomeValidation.errors
   };
-  if (context.legacyMigration) {
-    context.legacyMigration = {
-      ...context.legacyMigration,
-      legacyMainState: progressState === "decision_support" ? "S8" : context.legacyMigration.legacyMainState,
-      legacyMinimumProfileRoute: context.legacyMigration.legacyMinimumProfileRoute
-    };
-  }
   return context;
 }

@@ -23,10 +23,10 @@ export async function commitTurn({ conversationId, studentMessage, previousState
   state.operatingContext = committedContext;
   state.currentTruth = currentTruth;
   state.routeOutcomeOutputs ||= [];
+  delete state.memoryOutputs;
   state.messages.push({ role: "student", content: studentMessage, timestamp: now });
   state.messages.push({ role: "assistant", content: validationResult.finalResponse, timestamp: now });
 
-  const memoryIds = appendOutputs(state.memoryOutputs, validationResult.acceptedOutputs.memoryOutputs, now);
   const recommendationIds = appendOutputs(state.recommendationOutputs, validationResult.acceptedOutputs.recommendationOutputs, now);
   const routeOutcomeIds = appendOutputs(state.routeOutcomeOutputs, arrayOf(validationResult.acceptedOutputs.routeOutcomeOutput), now);
 
@@ -39,7 +39,6 @@ export async function commitTurn({ conversationId, studentMessage, previousState
 
   return {
     committedContext,
-    committedMemoryOutputIds: memoryIds,
     committedRecommendationOutputIds: recommendationIds,
     committedRouteOutcomeOutputIds: routeOutcomeIds,
     handoffPrepared: Boolean(state.handoff),
@@ -55,7 +54,6 @@ function newConversationState(conversationId, now) {
     operatingContext: DEFAULT_CONTEXT,
     currentTruth: null,
     messages: [],
-    memoryOutputs: [],
     recommendationOutputs: [],
     routeOutcomeOutputs: [],
     handoff: null,
