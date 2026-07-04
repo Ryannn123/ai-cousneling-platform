@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import re
+from datetime import UTC, datetime
+from typing import Any
+
+
+CONFIDENCE = {"low", "medium", "high"}
+BOUNDARY_TYPES = {
+    "ready_to_apply_or_register",
+    "official_action_request",
+    "payment_or_seat_request",
+    "exception_or_waiver_request",
+    "sensitive_context",
+    "human_requested_support",
+    "ambiguous_proceed_language",
+}
+QUALITY_TYPES = {"concern_or_blocker", "constraint", "preference", "influence_or_context", "other"}
+OFFICIAL_MEMORY = re.compile(r"\b(application submitted|registration completed|registered|payment confirmed|paid|seat reserved|crm updated|enrollment confirmed|enrolled)\b", re.I)
+
+
+class SemanticDeltaValidator:
+    def validate(
+        self,
+        raw_semantic_delta: dict[str, Any],
+        turn_input: dict[str, Any],
+        extractor: Any | None = None,
+        skill_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        rejected: list[dict[str, Any]] = []
+        downgraded: list[dict[str, Any]] = []
+        events = [{"type": "schema_validated", "severity": "info", "message": "Semantic delta schema normalized."}]
+        accepted_memory = normalize_memory_deltas(raw_semantic_delta)
+        accepted_signals = normalize_runtime_signals(raw_semantic_delta)
+
+        validate_flow(accepted_memory["flowDrivingDeltas"], rejected, downgraded, events)
+        validate_quality(accepted_memory["qualityEnhancingDeltas"], rejected, events)
+        validate_signals(accepted_signals, rejected, events)
+        preserve_human_help_posture(accepted_signals, events)
+
+        if any(signal.get("kind") == "boundary" and signal.get("type") == "ambiguous_proceed_language" for signal in accepted_signals):
+            events.append({"type": "clarification_required", "severity": "warning", "message": "Ambiguous proceed language requires clarification."})
+
+        requires_clarification = any(signal.get("recommendedBehavior") == "clarify_once" or signal.get("kind") == "ambiguity" for signal in accepted_signals)
+        status = (
+            "requires_clarification"
+            if requires_clarification
+            else "accepted_with_downgrades"
+            if downgraded
+            else "safe_fallback"
+            if any(item.get("severity") == "error" for item in rejected)
+            else "accepted"
+        )
+        return {
+            "platformMetadata": build_metadata(turn_input, extractor, skill_context),
+            "acceptedMemoryDeltas": accepted_memory,
+            "acceptedRuntimeOnlySignals": accepted_signals,
+            "rejectedCandidates": rejected,
+            "downgradedCandidates": downgraded,
+            "validationEvents": events,
+            "status": status,
+        }
+
+
+def normalize_memory_deltas(raw: dict[str, Any] | None) -> dict[str, Any]:
+    memory = raw.get("memoryDeltaCandidates", {}) if isinstance(raw, dict) else {}
+    flow = memory.get("flowDrivingDeltas", {}) if isinstance(memory, dict) else {}
+    return {
+        "flowDrivingDeltas": {
+            "academicResults": array(flow.get("academicResults")),
+            "coursesConsidering": array(flow.get("coursesConsidering")),
+            "confirmedCounselingCoursePreferences": object_or_none(flow.get("confirmedCounselingCoursePreferences")),
+            "universitiesConsidering": array(flow.get("universitiesConsidering")),
+            "confirmedCounselingUniversityPreferences": object_or_none(flow.get("confirmedCounselingUniversityPreferences")),
+            "pathwaysConsidering": array(flow.get("pathwaysConsidering")),
+            "confirmedCounselingPathwayPreferences": object_or_none(flow.get("confirmedCounselingPathwayPreferences")),
+        },
+        "qualityEnhancingDeltas": array(memory.get("qualityEnhancingDeltas") if isinstance(memory, dict) else None),
+    }
+
+
+def normalize_runtime_signals(raw: dict[str, Any] | None) -> list[dict[str, Any]]:
+    return array(raw.get("runtimeOnlySignalCandidates") if isinstance(raw, dict) else None)
+
+
+def validate_flow(flow: dict[str, Any], rejected: list[dict[str, Any]], downgraded: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+    for key in ["academicResults", "coursesConsidering", "universitiesConsidering", "pathwaysConsidering"]:
+        validate_delta_list(f"acceptedMemoryDeltas.flowDrivingDeltas.{key}", flow[key], rejected, events)
+    for label, list_key in [("Course", "coursesConsidering"), ("University", "universitiesConsidering"), ("Pathway", "pathwaysConsidering")]:
+        validate_confirmed_preference(flow, label, list_key, rejected, downgraded, events)
+
+
+def validate_quality(deltas: list[dict[str, Any]], rejected: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+    for index in range(len(deltas) - 1, -1, -1):
+        delta = deltas[index]
+        path = f"acceptedMemoryDeltas.qualityEnhancingDeltas.{index}"
+        if delta.get("usefulness") == "low":
+            reject(rejected, events, path, delta, "quality_signal_low_usefulness", "quality_signal_ignored")
+            del deltas[index]
+        elif not validate_candidate(path, delta, rejected, events) or delta.get("type") not in QUALITY_TYPES:
+            if delta.get("type") not in QUALITY_TYPES:
+                reject(rejected, events, path, delta, "quality_type_invalid")
+            del deltas[index]
+
+
+def validate_signals(signals: list[dict[str, Any]], rejected: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+    for index in range(len(signals) - 1, -1, -1):
+        signal = signals[index]
+        path = f"acceptedRuntimeOnlySignals.{index}"
+        if not validate_candidate(path, signal, rejected, events):
+            del signals[index]
+            continue
+        if signal.get("kind") == "boundary" and signal.get("type") not in BOUNDARY_TYPES:
+            reject(rejected, events, path, signal, "boundary_type_invalid")
+            del signals[index]
+            continue
+        events.append({"type": "runtime_signal_validated", "severity": "info", "message": f"{path} accepted as runtime-only."})
+
+
+def validate_delta_list(path: str, deltas: list[dict[str, Any]], rejected: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+    for index in range(len(deltas) - 1, -1, -1):
+        delta = deltas[index]
+        candidate_path = f"{path}.{index}"
+        if not validate_candidate(candidate_path, delta, rejected, events):
+            del deltas[index]
+        elif delta.get("operation") != "add_new":
+            reject(rejected, events, candidate_path, delta, "delta_operation_not_supported")
+            del deltas[index]
+        elif OFFICIAL_MEMORY.search(str(delta)):
+            reject(rejected, events, candidate_path, delta, "official_action_not_memory_delta")
+            del deltas[index]
+
+
+def validate_confirmed_preference(flow: dict[str, Any], label: str, list_key: str, rejected: list[dict[str, Any]], downgraded: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+    confirmed_key = f"confirmedCounseling{label}Preferences"
+    delta = flow.get(confirmed_key)
+    path = f"acceptedMemoryDeltas.flowDrivingDeltas.{confirmed_key}"
+    if not delta:
+        return
+    if not validate_candidate(path, delta, rejected, events) or not has_meaningful_value(delta):
+        if not has_meaningful_value(delta):
+            reject(rejected, events, path, delta, "delta_value_missing")
+        flow[confirmed_key] = None
+        return
+    direct_quote = " ".join(item.get("quote", "") for item in delta.get("evidence", []))
+    if not re.search(r"\b(my choice|choose|chosen|let'?s go with)\b", direct_quote, re.I):
+        downgraded_delta = {**delta, "status": "preferred", "promotionRisk": "requires_confirmation"}
+        if downgraded_delta.get("confidence") == "high":
+            downgraded_delta["confidence"] = "medium"
+        flow[list_key].append(downgraded_delta)
+        flow[confirmed_key] = None
+        downgraded.append({"candidatePath": path, "originalCandidate": delta, "downgradedCandidate": downgraded_delta, "reason": "value_confirmation_not_explicit"})
+        events.append({"type": "promotion_blocked", "severity": "warning", "message": f"{path} downgraded: value_confirmation_not_explicit."})
+
+
+def preserve_human_help_posture(signals: list[dict[str, Any]], events: list[dict[str, Any]]) -> None:
+    posture = next((signal for signal in signals if signal.get("kind") == "student_posture" and signal.get("posture") == "human_help_seeking"), None)
+    if posture and not any(signal.get("kind") == "boundary" and signal.get("type") == "human_requested_support" for signal in signals):
+        signals.append({
+            "kind": "boundary",
+            "type": "human_requested_support",
+            "triggerType": "H6",
+            "severityCandidate": "red",
+            "recommendedBehavior": "handoff",
+            "confidence": posture.get("confidence", "medium"),
+            "evidence": posture.get("evidence", []),
+            "source": posture.get("source"),
+            "promotionRisk": "official_action_risk",
+        })
+        events.append({"type": "posture_boundary_signal_preserved", "severity": "warning", "message": "Human-help posture preserved as H6 boundary candidate."})
+
+
+def validate_candidate(path: str, candidate: dict[str, Any], rejected: list[dict[str, Any]], events: list[dict[str, Any]]) -> bool:
+    if not isinstance(candidate, dict):
+        reject(rejected, events, path, candidate, "candidate_not_object")
+        return False
+    if not any(isinstance(item, dict) and str(item.get("quote", "")).strip() for item in candidate.get("evidence", [])):
+        reject(rejected, events, path, candidate, "missing_evidence")
+        return False
+    if candidate.get("confidence") not in CONFIDENCE:
+        reject(rejected, events, path, candidate, "confidence_invalid")
+        return False
+    events.append({"type": "evidence_validated", "severity": "info", "message": f"{path} has evidence."})
+    return True
+
+
+def build_metadata(turn_input: dict[str, Any], extractor: Any | None, skill_context: dict[str, Any] | None) -> dict[str, Any]:
+    metadata = {
+        "conversationId": turn_input.get("conversationId"),
+        "turnId": turn_input.get("turnId"),
+        "messageId": turn_input.get("messageId"),
+        "createdAt": datetime.now(UTC).isoformat(),
+        "extractor": {
+            "provider": getattr(extractor, "provider", "mock"),
+            "model": getattr(extractor, "model", "mock"),
+            "promptVersion": "phase4.semantic-delta.v1.3",
+            "schemaVersion": "phase4.semantic-delta.v1.3",
+        },
+        "validator": {
+            "validatorVersion": "semantic-delta-validator.v1.3",
+            "validationPolicyVersion": "phase4.semantic-delta-policy.v1.3",
+        },
+    }
+    if skill_context:
+        metadata["skillContext"] = skill_context
+    return metadata
+
+
+def reject(rejected: list[dict[str, Any]], events: list[dict[str, Any]], path: str, candidate: Any, reason: str, event_type: str = "candidate_rejected") -> None:
+    rejected.append({"candidatePath": path, "proposedCandidate": candidate, "reason": reason, "severity": "error" if reason == "missing_evidence" else "warning"})
+    events.append({"type": event_type, "severity": "warning", "message": f"{path} rejected: {reason}."})
+
+
+def has_meaningful_value(delta: dict[str, Any]) -> bool:
+    value = delta.get("value")
+    return bool(value.strip()) if isinstance(value, str) else bool(isinstance(value, dict) and value)
+
+
+def array(value: Any) -> list[dict[str, Any]]:
+    return value if isinstance(value, list) else []
+
+
+def object_or_none(value: Any) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
