@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
-from typing import Any
 from uuid import uuid4
 
 from .audit import AuditEventStore
+from .contracts import JsonObject, MemoryCommitResult
+from .safety import contains_official_truth
 from .settings import MEMORY_EVENTS_PATH
 from .storage import append_ndjson, read_ndjson
 
@@ -26,10 +26,6 @@ MEMORY_CATEGORIES = {
     "route_outcome",
 }
 ROUTE_OUTCOMES = {"confirmed_preference", "accepted_fallback", "deferred_decision", "student_switched_route", "blocked_by_boundary", "handoff_required"}
-OFFICIAL_TRUTH_PATTERN = re.compile(
-    r"\b(application submitted|registration completed|registered|payment confirmed|paid|seat reserved|crm updated|crm status updated|enrollment confirmed|enrolled|scholarship approved|eligibility approved|exception approved|official document submitted)\b",
-    re.I,
-)
 HANDOFF_OUTPUTS = {"readiness_to_register_signal", "handoff_required"}
 
 
@@ -37,7 +33,7 @@ class MemoryEventStore:
     def __init__(self, memory_events_path=MEMORY_EVENTS_PATH) -> None:
         self.memory_events_path = memory_events_path
 
-    def append_validated_event(self, event: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
+    def append_validated_event(self, event: JsonObject, idempotency_key: str) -> JsonObject:
         if not event.get("validation", {}).get("validated"):
             return {"status": "rejected_not_validated", "reasons": ["event_not_validated"]}
         duplicate = next((record for record in self.read_records() if record.get("idempotencyKey") == idempotency_key), None)
@@ -46,7 +42,7 @@ class MemoryEventStore:
         append_ndjson(self.memory_events_path, {"idempotencyKey": idempotency_key, "event": event})
         return {"status": "appended", "eventId": event["eventId"], "reasons": []}
 
-    def get_events_for_projection(self, student_id: str | None = None, categories: list[str] | None = None) -> list[dict[str, Any]]:
+    def get_events_for_projection(self, student_id: str | None = None, categories: list[str] | None = None) -> list[JsonObject]:
         category_set = set(categories or [])
         events = [
             event for event in self.read_events()
@@ -55,15 +51,15 @@ class MemoryEventStore:
         ]
         return sorted(events, key=lambda event: (str(event.get("createdAt")), str(event.get("eventId"))))
 
-    def read_events(self) -> list[dict[str, Any]]:
+    def read_events(self) -> list[JsonObject]:
         return [record.get("event", record) for record in self.read_records()]
 
-    def read_records(self) -> list[dict[str, Any]]:
+    def read_records(self) -> list[JsonObject]:
         return read_ndjson(self.memory_events_path)
 
 
 class MemoryEventValidator:
-    def validate(self, draft: dict[str, Any] | None, selected_skill_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    def validate(self, draft: JsonObject | None, selected_skill_context: JsonObject | None = None) -> JsonObject:
         errors: list[str] = []
         warnings: list[str] = []
         invariant = {
@@ -72,7 +68,7 @@ class MemoryEventValidator:
             "operationSupported": (draft or {}).get("operation") == "add_new",
             "evidenceSufficient": has_evidence(draft),
             "promotionSafe": True,
-            "officialTruthSafe": not OFFICIAL_TRUTH_PATTERN.search(str(draft or {})),
+            "officialTruthSafe": not contains_official_truth(draft or {}),
             "projectionIntentSafe": bool((draft or {}).get("merge", {}).get("projectionIntent")),
             "duplicatePolicySafe": True,
         }
@@ -108,7 +104,7 @@ class MemoryEventValidator:
             "invariantChecks": invariant,
         }
 
-    def to_durable_event(self, draft: dict[str, Any], selected_skill_context: dict[str, Any] | None) -> dict[str, Any]:
+    def to_durable_event(self, draft: JsonObject, selected_skill_context: JsonObject | None) -> JsonObject:
         selected = (selected_skill_context or {}).get("selectedRuntimeSkill") or {}
         return {
             "eventId": str(uuid4()),
@@ -137,8 +133,8 @@ class MemoryEventValidator:
 
 
 class MemoryIngestionPolicy:
-    def pre_response_decisions(self, student_id: str, accepted_semantic_delta: dict[str, Any], current_truth_before_commit: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        decisions: list[dict[str, Any]] = []
+    def pre_response_decisions(self, student_id: str, accepted_semantic_delta: JsonObject, current_truth_before_commit: JsonObject | None = None) -> list[JsonObject]:
+        decisions: list[JsonObject] = []
         flow = accepted_semantic_delta.get("acceptedMemoryDeltas", {}).get("flowDrivingDeltas", {})
         for index, delta in enumerate(flow.get("academicResults", [])):
             decisions.append(self.student_delta_decision(student_id, accepted_semantic_delta, f"flow.academicResults.{index}", delta, "academic", {"rawText": value_of(delta), "status": "known"}))
@@ -160,8 +156,8 @@ class MemoryIngestionPolicy:
             decisions.append(self.quality_decision(student_id, accepted_semantic_delta, f"qualityEnhancingDeltas.{index}", delta))
         return decisions
 
-    def post_response_decisions(self, student_id: str, accepted_semantic_delta: dict[str, Any], validated_ai_output: dict[str, Any], validation_result: dict[str, Any], final_boundary_result: dict[str, Any], selected_skill_context: dict[str, Any]) -> list[dict[str, Any]]:
-        decisions: list[dict[str, Any]] = []
+    def post_response_decisions(self, student_id: str, accepted_semantic_delta: JsonObject, validated_ai_output: JsonObject, validation_result: JsonObject, final_boundary_result: JsonObject, selected_skill_context: JsonObject) -> list[JsonObject]:
+        decisions: list[JsonObject] = []
         for index, output in enumerate(validation_result.get("acceptedOutputs", {}).get("recommendationOutputs", [])):
             decisions.append(self.ai_output_decision(student_id, accepted_semantic_delta, selected_skill_context, f"ai.recommendationOutputs.{index}", {
                 "type": "recommendation_shown",
@@ -182,12 +178,12 @@ class MemoryIngestionPolicy:
             decisions.append(self.ai_output_decision(student_id, accepted_semantic_delta, selected_skill_context, "route.outcomeOutput", route_outcome))
         return decisions
 
-    def direction_decision(self, student_id: str, accepted_semantic_delta: dict[str, Any], accepted_delta_id: str, delta: dict[str, Any], direction_type: str) -> dict[str, Any]:
+    def direction_decision(self, student_id: str, accepted_semantic_delta: JsonObject, accepted_delta_id: str, delta: JsonObject, direction_type: str) -> JsonObject:
         if delta.get("status") == "rejected":
             return self.student_delta_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "rejected_option", {"optionType": direction_type, "value": value_of(delta), "status": "rejected"})
         return self.student_delta_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, f"{direction_type}_direction", {"value": value_of(delta), "status": delta.get("status", "considering")})
 
-    def quality_decision(self, student_id: str, accepted_semantic_delta: dict[str, Any], accepted_delta_id: str, delta: dict[str, Any]) -> dict[str, Any]:
+    def quality_decision(self, student_id: str, accepted_semantic_delta: JsonObject, accepted_delta_id: str, delta: JsonObject) -> JsonObject:
         category = "constraint" if delta.get("type") == "constraint" else "concern_or_blocker" if delta.get("type") == "concern_or_blocker" else "quality_context"
         return self.student_delta_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, category, {
             "type": delta.get("type"),
@@ -197,18 +193,18 @@ class MemoryIngestionPolicy:
             "constraintStrength": delta.get("constraintStrength") or ("hard_constraint" if category == "constraint" else "soft_preference"),
         })
 
-    def student_delta_decision(self, student_id: str, accepted_semantic_delta: dict[str, Any], accepted_delta_id: str, delta: dict[str, Any], category: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def student_delta_decision(self, student_id: str, accepted_semantic_delta: JsonObject, accepted_delta_id: str, delta: JsonObject, category: str, payload: JsonObject) -> JsonObject:
         return self.create_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, category, "pre_response_student_stated_memory", payload, "may_update_current_truth")
 
-    def ai_output_decision(self, student_id: str, accepted_semantic_delta: dict[str, Any], selected_skill_context: dict[str, Any], accepted_delta_id: str, output: dict[str, Any]) -> dict[str, Any]:
+    def ai_output_decision(self, student_id: str, accepted_semantic_delta: JsonObject, selected_skill_context: JsonObject, accepted_delta_id: str, output: JsonObject) -> JsonObject:
         category = category_for_ai_output(output)
         if not category:
-            return {"acceptedDeltaId": accepted_delta_id, "decision": "audit_only", "commitClass": "audit_only", "reasons": ["ai_output_is_agent_action_not_durable_memory"], "officialTruthCheck": {"passed": not OFFICIAL_TRUTH_PATTERN.search(str(output))}}
+            return {"acceptedDeltaId": accepted_delta_id, "decision": "audit_only", "commitClass": "audit_only", "reasons": ["ai_output_is_agent_action_not_durable_memory"], "officialTruthCheck": {"passed": not contains_official_truth(output)}}
         delta = {"operation": "add_new", "confidence": output.get("confidence", "medium"), "evidence": evidence_from_output(output), "source": "validated_ai_output"}
         return self.create_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, category, "post_response_ai_produced_output", payload_for_output(output, selected_skill_context), "may_update_current_truth")
 
-    def create_decision(self, student_id: str, accepted_semantic_delta: dict[str, Any], accepted_delta_id: str, delta: dict[str, Any], category: str, commit_class: str, payload: dict[str, Any], projection_intent: str) -> dict[str, Any]:
-        official_safe = not OFFICIAL_TRUTH_PATTERN.search(str({"delta": delta, "payload": payload}))
+    def create_decision(self, student_id: str, accepted_semantic_delta: JsonObject, accepted_delta_id: str, delta: JsonObject, category: str, commit_class: str, payload: JsonObject, projection_intent: str) -> JsonObject:
+        official_safe = not contains_official_truth({"delta": delta, "payload": payload})
         operation_supported = delta.get("operation") == "add_new"
         event_draft = None
         if official_safe and operation_supported:
@@ -252,18 +248,18 @@ class MemoryStateService:
         self.memory_event_validator = memory_event_validator or MemoryEventValidator()
         self.current_truth_projector = current_truth_projector or CurrentTruthProjector()
 
-    def derive_current_truth(self, student_id: str, conversation_id: str | None = None, turn_id: str | None = None) -> dict[str, Any]:
+    def derive_current_truth(self, student_id: str, conversation_id: str | None = None, turn_id: str | None = None) -> JsonObject:
         return self.current_truth_projector.project(student_id, self.memory_event_store.get_events_for_projection(student_id))
 
-    def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: dict[str, Any], current_truth_before_commit: dict[str, Any]) -> dict[str, Any]:
+    def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: JsonObject, current_truth_before_commit: JsonObject) -> MemoryCommitResult:
         return self.commit_decisions(student_id, accepted_semantic_delta, None, self.ingestion_policy.pre_response_decisions(student_id, accepted_semantic_delta, current_truth_before_commit))
 
-    def commit_post_response_ai_outputs(self, student_id: str, accepted_semantic_delta: dict[str, Any], validated_ai_output: dict[str, Any], validation_result: dict[str, Any], final_boundary_result: dict[str, Any], selected_skill_context: dict[str, Any]) -> dict[str, Any]:
+    def commit_post_response_ai_outputs(self, student_id: str, accepted_semantic_delta: JsonObject, validated_ai_output: JsonObject, validation_result: JsonObject, final_boundary_result: JsonObject, selected_skill_context: JsonObject) -> MemoryCommitResult:
         if validation_result.get("status") not in {"accepted", "downgraded", "blocked", "clarify", "handoff_override"}:
             return empty_commit_result()
         return self.commit_decisions(student_id, accepted_semantic_delta, selected_skill_context, self.ingestion_policy.post_response_decisions(student_id, accepted_semantic_delta, validated_ai_output, validation_result, final_boundary_result, selected_skill_context))
 
-    def commit_decisions(self, student_id: str, accepted_semantic_delta: dict[str, Any], selected_skill_context: dict[str, Any] | None, decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    def commit_decisions(self, student_id: str, accepted_semantic_delta: JsonObject, selected_skill_context: JsonObject | None, decisions: list[JsonObject]) -> MemoryCommitResult:
         result = empty_commit_result()
         for decision in decisions:
             if decision.get("decision") != "create_memory_event":
@@ -290,7 +286,7 @@ class MemoryStateService:
 
 
 class CurrentTruthProjector:
-    def project(self, student_id: str | None = None, events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def project(self, student_id: str | None = None, events: list[JsonObject] | None = None) -> JsonObject:
         sorted_events = sorted(events or [], key=lambda event: (str(event.get("createdAt")), str(event.get("eventId"))))
         projection = empty_projection(student_id, sorted_events)
         for event in sorted_events:
@@ -303,7 +299,7 @@ class CurrentTruthProjector:
         return projection
 
 
-def empty_projection(student_id: str | None, events: list[dict[str, Any]]) -> dict[str, Any]:
+def empty_projection(student_id: str | None, events: list[JsonObject]) -> JsonObject:
     return {
         "studentId": student_id,
         "metadata": {"projectorVersion": "current-truth-projector.phase5.v1", "generatedAt": datetime.now(UTC).isoformat(), "sourceEventIds": [event.get("eventId") for event in events], "derivationStatus": "complete", "warnings": []},
@@ -319,7 +315,7 @@ def empty_projection(student_id: str | None, events: list[dict[str, Any]]) -> di
     }
 
 
-def apply_event(projection: dict[str, Any], event: dict[str, Any]) -> None:
+def apply_event(projection: JsonObject, event: JsonObject) -> None:
     payload = event.get("payload", {})
     category = event.get("category")
     if category == "academic":
@@ -347,12 +343,12 @@ def apply_event(projection: dict[str, Any], event: dict[str, Any]) -> None:
         apply_route_outcome(projection, event)
 
 
-def quality_item(event: dict[str, Any]) -> dict[str, Any]:
+def quality_item(event: JsonObject) -> JsonObject:
     payload = event.get("payload", {})
     return {"type": payload.get("type"), "value": payload.get("value"), "confidence": event.get("confidence"), "supportingEventIds": [event.get("eventId")]}
 
 
-def upsert_direction(target: list[dict[str, Any]], event: dict[str, Any]) -> None:
+def upsert_direction(target: list[JsonObject], event: JsonObject) -> None:
     payload = event.get("payload", {})
     existing = next((item for item in target if same_text(item.get("value"), payload.get("value"))), None)
     next_item = {"value": payload.get("value"), "status": payload.get("status", "considering"), "confidence": event.get("confidence"), "supportingEventIds": [*(existing or {}).get("supportingEventIds", []), event.get("eventId")]}
@@ -362,7 +358,7 @@ def upsert_direction(target: list[dict[str, Any]], event: dict[str, Any]) -> Non
         target.append(next_item)
 
 
-def apply_counseling_preference(projection: dict[str, Any], event: dict[str, Any]) -> None:
+def apply_counseling_preference(projection: JsonObject, event: JsonObject) -> None:
     payload = event.get("payload", {})
     preference = projection["preference"].setdefault("confirmedCounselingPreference", {})
     projection["preference"]["preferenceStrength"] = "L4"
@@ -376,7 +372,7 @@ def apply_counseling_preference(projection: dict[str, Any], event: dict[str, Any
     preference["supportingEventIds"] = [*preference.get("supportingEventIds", []), event.get("eventId")]
 
 
-def apply_handoff_readiness(projection: dict[str, Any], event: dict[str, Any]) -> None:
+def apply_handoff_readiness(projection: JsonObject, event: JsonObject) -> None:
     payload = event.get("payload", {})
     value = payload.get("value", {})
     projection["handoffReadiness"]["handoffRequired"] = True
@@ -386,7 +382,7 @@ def apply_handoff_readiness(projection: dict[str, Any], event: dict[str, Any]) -
     projection["preference"]["preferenceStrength"] = "L5"
 
 
-def apply_route_outcome(projection: dict[str, Any], event: dict[str, Any]) -> None:
+def apply_route_outcome(projection: JsonObject, event: JsonObject) -> None:
     payload = event.get("payload", {})
     value = payload.get("value") or payload
     route_type = value.get("routeType") or payload.get("routeType")
@@ -410,7 +406,7 @@ def apply_route_outcome(projection: dict[str, Any], event: dict[str, Any]) -> No
         route_projection["handoffRouteOutcomes"].append(item)
 
 
-def finalize_direction(projection: dict[str, Any]) -> None:
+def finalize_direction(projection: JsonObject) -> None:
     if not projection["direction"]["activeUniversityDirections"]:
         location_signal = next((item for item in [*projection["qualityContext"]["hardConstraints"], *projection["qualityContext"]["softPreferences"]] if isinstance(item.get("value"), dict) and item["value"].get("location")), None)
         if location_signal:
@@ -432,7 +428,7 @@ def finalize_direction(projection: dict[str, Any]) -> None:
         projection["preference"]["preferenceStrength"] = strongest_preference(projection)
 
 
-def finalize_route(projection: dict[str, Any]) -> None:
+def finalize_route(projection: JsonObject) -> None:
     missing = []
     if projection["academic"]["academicResultStatus"] != "known":
         missing.append("academic_result")
@@ -444,7 +440,7 @@ def finalize_route(projection: dict[str, Any]) -> None:
     projection["route"]["routeReadiness"] = "incomplete" if missing else "ready"
 
 
-def finalize_recommendation_readiness(projection: dict[str, Any]) -> None:
+def finalize_recommendation_readiness(projection: JsonObject) -> None:
     basis = projection["recommendationReadiness"]["basis"]
     basis["hasUsableAcademicResult"] = projection["academic"]["academicResultStatus"] == "known"
     basis["hasUsableCourseDirection"] = is_known_direction(projection["direction"]["courseDirectionStatus"])
@@ -459,29 +455,29 @@ def finalize_recommendation_readiness(projection: dict[str, Any]) -> None:
     projection["qualityContext"]["qualityContextSummary"] = "; ".join(str(item.get("value")) for item in [*projection["qualityContext"]["hardConstraints"], *projection["qualityContext"]["softPreferences"], *projection["qualityContext"]["influenceOrContext"]])
 
 
-def accepted_semantic_delta_id_of(accepted_semantic_delta: dict[str, Any]) -> str:
+def accepted_semantic_delta_id_of(accepted_semantic_delta: JsonObject) -> str:
     meta = accepted_semantic_delta.get("platformMetadata", {})
     return f"{meta.get('conversationId', 'unknown')}:{meta.get('turnId', 'unknown')}:{meta.get('messageId', 'unknown')}"
 
 
-def idempotency_key_for(draft: dict[str, Any]) -> str:
+def idempotency_key_for(draft: JsonObject) -> str:
     return f"{draft.get('studentId')}:{draft.get('source', {}).get('acceptedSemanticDeltaId')}:{draft.get('source', {}).get('acceptedDeltaId')}:{draft.get('category')}:{draft.get('operation')}"
 
 
-def empty_commit_result() -> dict[str, Any]:
-    return {"appendedMemoryEventIds": [], "ignoredDuplicateEventIds": [], "rejectedDeltaIds": [], "auditEventIds": [], "warnings": []}
+def empty_commit_result() -> MemoryCommitResult:
+    return MemoryCommitResult()
 
 
-def has_evidence(draft: dict[str, Any] | None) -> bool:
+def has_evidence(draft: JsonObject | None) -> bool:
     return any(isinstance(item, dict) and str(item.get("quote", "")).strip() for item in (draft or {}).get("evidence", []))
 
 
-def normalize_evidence(evidence: Any, source: str = "student_message") -> list[dict[str, str]]:
+def normalize_evidence(evidence: object, source: str = "student_message") -> list[dict[str, str]]:
     items = evidence if isinstance(evidence, list) else [{"quote": evidence}]
     return [{"quote": item["quote"], "source": "validated_ai_output" if source == "validated_ai_output" else "student_message"} for item in items if isinstance(item, dict) and isinstance(item.get("quote"), str) and item.get("quote").strip()]
 
 
-def evidence_from_output(output: dict[str, Any]) -> list[dict[str, str]]:
+def evidence_from_output(output: JsonObject) -> list[dict[str, str]]:
     if isinstance(output.get("evidence"), list):
         return output["evidence"]
     if isinstance(output.get("evidence"), str):
@@ -489,15 +485,15 @@ def evidence_from_output(output: dict[str, Any]) -> list[dict[str, str]]:
     return [{"quote": str(output.get("value") or output)[:160]}]
 
 
-def value_of(delta: dict[str, Any]) -> Any:
+def value_of(delta: JsonObject) -> object:
     return delta.get("value") or delta.get("courseOrProgram") or delta.get("university") or delta.get("pathway")
 
 
-def category_for_ai_output(output: dict[str, Any]) -> str | None:
+def category_for_ai_output(output: JsonObject) -> str | None:
     return "route_outcome" if output.get("type") == "route_outcome" else "handoff_readiness" if output.get("type") in HANDOFF_OUTPUTS else "recommendation_interaction" if output.get("type") == "recommendation_shown" else None
 
 
-def payload_for_output(output: dict[str, Any], selected_skill_context: dict[str, Any]) -> dict[str, Any]:
+def payload_for_output(output: JsonObject, selected_skill_context: JsonObject) -> JsonObject:
     selected = selected_skill_context.get("selectedRuntimeSkill", {})
     if output.get("type") == "route_outcome":
         value = output.get("value", {})
@@ -509,16 +505,16 @@ def is_known_direction(status: str | None) -> bool:
     return bool(status and status != "unknown")
 
 
-def same_text(a: Any, b: Any) -> bool:
+def same_text(a: object, b: object) -> bool:
     return str(a or "").lower() == str(b or "").lower()
 
 
-def stronger_direction(current: dict[str, Any], next_item: dict[str, Any]) -> dict[str, Any]:
+def stronger_direction(current: JsonObject, next_item: JsonObject) -> JsonObject:
     rank = {"considering": 1, "preferred": 2, "confirmed_counseling_preference": 3}
     return next_item if rank.get(next_item.get("status"), 0) >= rank.get(current.get("status"), 0) else {**current, "supportingEventIds": next_item["supportingEventIds"]}
 
 
-def direction_status(options: list[dict[str, Any]], option_type: str) -> str:
+def direction_status(options: list[JsonObject], option_type: str) -> str:
     if any(item.get("status") == "confirmed_counseling_preference" for item in options):
         return f"confirmed_counseling_{option_type}_preference"
     if any(item.get("status") == "preferred" for item in options):
@@ -528,16 +524,16 @@ def direction_status(options: list[dict[str, Any]], option_type: str) -> str:
     return "unknown"
 
 
-def without_rejected(options: list[dict[str, Any]], projection: dict[str, Any], option_type: str) -> list[dict[str, Any]]:
+def without_rejected(options: list[JsonObject], projection: JsonObject, option_type: str) -> list[JsonObject]:
     rejected = projection["direction"]["rejectedOptions"]
     return [option for option in options if not any(item.get("optionType") == option_type and same_text(item.get("value"), option.get("value")) for item in rejected)]
 
 
-def has_any_direction(projection: dict[str, Any]) -> bool:
+def has_any_direction(projection: JsonObject) -> bool:
     direction = projection["direction"]
     return bool(direction["activeCourseDirections"] or direction["activeUniversityDirections"] or direction["activePathwayDirections"])
 
 
-def strongest_preference(projection: dict[str, Any]) -> str:
+def strongest_preference(projection: JsonObject) -> str:
     all_directions = [*projection["direction"]["activeCourseDirections"], *projection["direction"]["activeUniversityDirections"], *projection["direction"]["activePathwayDirections"]]
     return "L3" if any(item.get("status") == "preferred" for item in all_directions) else "L2" if all_directions else "none"

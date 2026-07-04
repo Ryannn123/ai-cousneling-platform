@@ -1,42 +1,41 @@
 from __future__ import annotations
 
-import re
 from copy import deepcopy
-from typing import Any
 
+from .contracts import JsonObject, ValidationResult
 from .constants import OFFICIAL_ACTION_OUTPUTS
 from .routes import RouteOutcomeValidator, route_goal
-
-
-OFFICIAL_COMPLETION_LANGUAGE = re.compile(r"\b(application submitted|registered you|registration completed|seat reserved|payment confirmed|enrollment confirmed|updated crm)\b", re.I)
-OLD_MINIMUM_PROFILE_LANGUAGE = re.compile(r"\b(prestige/ranking|ranking.*budget|budget.*location|preferred study location)\b", re.I)
-NON_OFFICIAL_LANGUAGE = re.compile(r"\bnot (an|official)|does not submit|does not register|not application|not.*registration|not.*payment|not.*seat|not.*crm", re.I)
-COMPLETION_LANGUAGE = re.compile(r"\b(route is complete|completed the route|we are done with this route|final choice is locked)\b", re.I)
+from .safety import (
+    claims_official_completion,
+    claims_route_completion,
+    contains_non_official_clarification,
+    contains_old_minimum_profile_language,
+)
 
 
 class ValidationPipeline:
     def __init__(self, route_outcome_validator: RouteOutcomeValidator | None = None) -> None:
         self.route_outcome_validator = route_outcome_validator or RouteOutcomeValidator()
 
-    def validate(self, ai_execution_result: dict[str, Any], boundary_result: dict[str, Any], operating_context: dict[str, Any], skill_selection: dict[str, Any], accepted_semantic_delta: dict[str, Any]) -> dict[str, Any]:
-        validation_events: list[dict[str, Any]] = []
-        blocked_outputs: list[dict[str, Any]] = []
-        accepted_recommendations: list[dict[str, Any]] = []
+    def validate(self, ai_execution_result: JsonObject, boundary_result: JsonObject, operating_context: JsonObject, skill_selection: JsonObject, accepted_semantic_delta: JsonObject) -> ValidationResult:
+        validation_events: list[JsonObject] = []
+        blocked_outputs: list[JsonObject] = []
+        accepted_recommendations: list[JsonObject] = []
         final_response = ai_execution_result["response"]["studentMessage"]
         status = "accepted"
 
         if boundary_result.get("allowedNextBehavior") == "handoff":
             status = "handoff_override"
             validation_events.append({"type": "boundary_override", "severity": "warning", "message": "Red-zone boundary overrides normal counseling."})
-        if OFFICIAL_COMPLETION_LANGUAGE.search(final_response):
+        if claims_official_completion(final_response):
             final_response = "I cannot complete application, registration, payment, enrollment, seat reservation, or CRM actions. I can prepare a handoff so a human counselor can continue."
             status = "safe_fallback"
             validation_events.append({"type": "official_action_language_blocked", "severity": "error", "message": "Student-facing response implied official completion."})
-        if operating_context.get("primaryCounselingAction") == "orient_initial_route" and OLD_MINIMUM_PROFILE_LANGUAGE.search(final_response):
+        if operating_context.get("primaryCounselingAction") == "orient_initial_route" and contains_old_minimum_profile_language(final_response):
             final_response = "To guide you properly, I only need the routing basics first: your academic result, whether you already have a course in mind, and whether you already have a university in mind."
             status = "safe_fallback"
             validation_events.append({"type": "old_minimum_profile_language_blocked", "severity": "warning", "message": "Minimum-profile response used old ranking/budget/location gate wording."})
-        if operating_context.get("counselorResponseMode") == "milestone_confirmation" and not NON_OFFICIAL_LANGUAGE.search(final_response):
+        if operating_context.get("counselorResponseMode") == "milestone_confirmation" and not contains_non_official_clarification(final_response):
             final_response = f"{final_response} This is only a counseling preference, not an official application, registration, payment, enrollment, seat reservation, or CRM update."
             status = "downgraded" if status == "accepted" else status
             validation_events.append({"type": "milestone_non_official_clarification_added", "severity": "warning", "message": "Confirmed-preference milestone needed explicit non-official clarification."})
@@ -70,7 +69,7 @@ class ValidationPipeline:
             status = "blocked"
         if boundary_result.get("allowedNextBehavior") == "clarify":
             status = "clarify"
-        return {
+        return ValidationResult.model_validate({
             "status": status,
             "finalResponse": final_response,
             "acceptedContextUpdate": ai_execution_result.get("proposedContextUpdate") or {},
@@ -79,15 +78,15 @@ class ValidationPipeline:
             "validationEvents": validation_events,
             "routeOutcomeValidation": route_outcome_validation,
             "acceptedOperatingContext": accepted_operating_context,
-        }
+        })
 
 
-def validate_response_alignment(final_response: str, operating_context: dict[str, Any]) -> dict[str, Any]:
+def validate_response_alignment(final_response: str, operating_context: JsonObject) -> JsonObject:
     events = []
     route = operating_context.get("activeRouteEpisode")
     if not route:
         return {"status": "valid", "validationEvents": events}
-    if COMPLETION_LANGUAGE.search(final_response) and not route.get("routeOutcomeCandidate"):
+    if claims_route_completion(final_response) and not route.get("routeOutcomeCandidate"):
         events.append({"type": "route_completion_language_blocked", "severity": "error", "message": "Response claimed route completion without a validated route outcome candidate."})
         return {"status": "reject", "validationEvents": events}
     if operating_context.get("counselorResponseMode") in {"decision_support", "reassuring_orientation", "route_explanation"} and final_response.count("?") > 1:
@@ -95,7 +94,7 @@ def validate_response_alignment(final_response: str, operating_context: dict[str
     return {"status": "valid", "validationEvents": events}
 
 
-def context_after_rejected_route_outcome(operating_context: dict[str, Any], route_outcome_validation: dict[str, Any]) -> dict[str, Any]:
+def context_after_rejected_route_outcome(operating_context: JsonObject, route_outcome_validation: JsonObject) -> JsonObject:
     context = deepcopy(operating_context)
     route = context.get("activeRouteEpisode")
     if not route:

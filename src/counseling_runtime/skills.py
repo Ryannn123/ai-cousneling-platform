@@ -3,11 +3,11 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 
 from .constants import MANDATORY_BOUNDARY_RULES
+from .contracts import JsonObject, SkillSelection
 from .settings import SKILLS_DIR
 
 
@@ -37,18 +37,18 @@ REQUIRED_METADATA = {"name", "description", "version", "artifact_type", "status"
 
 @dataclass(slots=True)
 class ParsedSkill:
-    metadata: dict[str, Any]
+    metadata: JsonObject
     body: str
-    ref: dict[str, Any]
+    ref: JsonObject
 
 
 class SkillControlService:
     def __init__(self, skills_dir: Path = SKILLS_DIR) -> None:
         self.skills_dir = Path(skills_dir)
 
-    def get_skill_inventory(self) -> dict[str, Any]:
+    def get_skill_inventory(self) -> JsonObject:
         loaded: list[ParsedSkill] = []
-        rejected: list[dict[str, Any]] = []
+        rejected: list[JsonObject] = []
         if not self.skills_dir.exists():
             return {"loaded": [], "rejected": []}
 
@@ -66,7 +66,7 @@ class SkillControlService:
             loaded.append(parsed)
         return {"loaded": loaded, "rejected": rejected}
 
-    def select(self, operating_context: dict[str, Any], boundary_result: dict[str, Any]) -> dict[str, Any]:
+    def select(self, operating_context: JsonObject, boundary_result: JsonObject) -> SkillSelection:
         inventory = self.get_skill_inventory()
         rejected_candidates = [{"skill": item["skill"], "reason": item["reason"]} for item in inventory["rejected"]]
         runtime_skill_name = (
@@ -87,7 +87,7 @@ class SkillControlService:
             if (item := find_compatible(inventory["loaded"], name, "boundary_rule", operating_context, rejected_candidates, True))
         ]
 
-        return {
+        return SkillSelection.model_validate({
             "selectedPlaybook": selected_playbook,
             "selectedRuntimeSkill": selected_runtime_skill or fallback_ref(runtime_skill_name, "runtime_skill"),
             "selectedRuntimeSkillBody": selected_runtime_package.body if selected_runtime_package else "",
@@ -95,11 +95,11 @@ class SkillControlService:
             "rejectedCandidates": rejected_candidates,
             "allowedMemoryOutputTypes": (selected_runtime_package.metadata.get("allowed_memory_outputs", []) if selected_runtime_package else []),
             "forbiddenMemoryOutputTypes": (selected_runtime_package.metadata.get("forbidden_memory_outputs", []) if selected_runtime_package else []),
-        }
+        })
 
 
 def parse_skill_markdown(raw: str, source_path: Path) -> ParsedSkill:
-    metadata: dict[str, Any] = {}
+    metadata: JsonObject = {}
     body = raw
     if raw.startswith("---"):
         _, frontmatter, body = raw.split("---", 2)
@@ -118,10 +118,10 @@ def find_compatible(
     loaded: list[ParsedSkill],
     name: str,
     artifact_type: str,
-    context: dict[str, Any],
-    rejected_candidates: list[dict[str, Any]],
+    context: JsonObject,
+    rejected_candidates: list[JsonObject],
     optional: bool = False,
-) -> dict[str, Any] | None:
+) -> JsonObject | None:
     candidate = next((skill for skill in loaded if skill.metadata.get("name") == name and skill.metadata.get("artifact_type") == artifact_type), None)
     if not candidate:
         if not optional:
@@ -134,7 +134,7 @@ def find_compatible(
     return candidate.ref
 
 
-def compatibility_failure(metadata: dict[str, Any], context: dict[str, Any]) -> str | None:
+def compatibility_failure(metadata: JsonObject, context: JsonObject) -> str | None:
     route = context.get("activeRouteEpisode") or {}
     checks = [
         (metadata.get("route_episode", {}).get("applies_to_active_routes") or metadata.get("applies_to_active_routes"), route.get("routeType"), "route"),
@@ -151,5 +151,5 @@ def compatibility_failure(metadata: dict[str, Any], context: dict[str, Any]) -> 
     return None
 
 
-def fallback_ref(name: str, artifact_type: str) -> dict[str, Any]:
+def fallback_ref(name: str, artifact_type: str) -> JsonObject:
     return {"name": name, "version": "missing", "artifactType": artifact_type}

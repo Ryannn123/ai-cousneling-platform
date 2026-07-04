@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from pydantic_ai import Agent
 
+from .contracts import ExecutionContext, JsonObject, TurnInput
 from .schemas import AIExecutionResult, SemanticDeltaResult, dump
 from .settings import Settings, get_settings
+from .storage import jsonable
 
 
 SYSTEM_PROMPT = " ".join([
@@ -34,7 +35,7 @@ class AISemanticDeltaExtractor:
         self.model = self.settings.model_name
         self.agent = agent
 
-    async def extract(self, turn_input: dict[str, Any]) -> dict[str, Any]:
+    async def extract(self, turn_input: TurnInput | JsonObject) -> JsonObject:
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for semantic extraction")
         agent = self.agent or Agent(self.settings.pydantic_ai_model, system_prompt=SEMANTIC_PROMPT, output_type=SemanticDeltaResult)
@@ -50,7 +51,7 @@ class AIExecutionClient:
         self.model = self.settings.model_name
         self.agent = agent
 
-    async def execute(self, execution_context: dict[str, Any]) -> dict[str, Any]:
+    async def execute(self, execution_context: ExecutionContext | JsonObject) -> JsonObject:
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for execution")
         agent = self.agent or Agent(self.settings.pydantic_ai_model, system_prompt=SYSTEM_PROMPT, output_type=AIExecutionResult)
@@ -58,11 +59,11 @@ class AIExecutionClient:
         return dump(result.output)
 
 
-def semantic_delta_input(turn_input: dict[str, Any]) -> dict[str, Any]:
+def semantic_delta_input(turn_input: TurnInput | JsonObject) -> JsonObject:
     return {key: value for key, value in turn_input.items() if key not in {"conversationId", "turnId", "messageId", "previousRuntimeState"}}
 
 
-def build_response_prompt(context: dict[str, Any]) -> str:
+def build_response_prompt(context: ExecutionContext | JsonObject) -> str:
     sections: list[str | None] = [
         section("Student Message", context.get("studentMessage") or ""),
         section("Conversation Context", context.get("conversationContext") or "No prior messages."),
@@ -81,6 +82,6 @@ def build_response_prompt(context: dict[str, Any]) -> str:
     return "\n\n".join(item for item in sections if item)
 
 
-def section(title: str, value: Any) -> str:
-    content = value if isinstance(value, str) else json.dumps(value or {}, indent=2)
+def section(title: str, value: object) -> str:
+    content = value if isinstance(value, str) else json.dumps(jsonable(value or {}), indent=2)
     return f"## {title}\n{content}"

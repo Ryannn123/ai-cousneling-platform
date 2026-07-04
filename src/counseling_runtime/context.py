@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, TurnInput
+
+
+def build_operating_context(
+    previous_state: JsonObject,
+    turn_input: TurnInput,
+    boundary_result: BoundaryResult,
+    accepted_semantic_delta: JsonObject,
+    current_truth: JsonObject,
+    active_route_episode: ActiveRouteEpisode,
+) -> JsonObject:
+    runtime_signals = accepted_semantic_delta.get("acceptedRuntimeOnlySignals", [])
+    has_ambiguity = any(signal.get("kind") == "ambiguity" for signal in runtime_signals)
+    primary_action = (
+        "clarify_ambiguity"
+        if has_ambiguity and boundary_result.get("allowedNextBehavior") == "continue"
+        else action_from_route(boundary_result, active_route_episode)
+    )
+    posture = next((signal.get("posture") for signal in runtime_signals if signal.get("kind") == "student_posture"), None)
+    posture = posture or posture_from_route(active_route_episode)
+    mode = response_mode_from_route(boundary_result, active_route_episode, posture, has_ambiguity)
+    context = {
+        "currentZone": boundary_result.get("finalZone"),
+        "boundary": boundary_result,
+        "activeRouteEpisode": active_route_episode,
+        "primaryCounselingAction": primary_action,
+        "recommendationReadiness": current_truth["recommendationReadiness"]["level"],
+        "preferenceStrength": current_truth["preference"]["preferenceStrength"],
+        "handoffStatus": boundary_result.get("handoffStatus"),
+        "currentTruth": current_truth_summary(current_truth),
+        "studentPosture": posture,
+        "decisionSupportMode": decision_support_mode(active_route_episode),
+        "summaryCheckpointStatus": "required" if mode in {"summary_checkpoint", "milestone_confirmation"} else "not_required",
+        "milestoneConfirmationStatus": "required" if active_route_episode.get("progressState") == "confirmed_preference" else "not_applicable",
+        "nextBestCounselingMove": next_best_move(boundary_result, active_route_episode),
+        "validationRequirements": validation_requirements(boundary_result, active_route_episode),
+        "counselorResponseMode": mode,
+    }
+    active_direction = active_direction_from_current_truth(current_truth)
+    if active_direction:
+        context["activeStudentDirection"] = active_direction
+    return context
+
+
+def action_from_route(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> str:
+    if boundary_result.get("allowedNextBehavior") == "handoff":
+        return "prepare_handoff"
+    if boundary_result.get("allowedNextBehavior") == "clarify":
+        return "clarify_ambiguity"
+    if route.get("progressState") == "detour_resume":
+        return "answer_detour"
+    if route.get("progressState") == "comparison":
+        return "compare_shortlist"
+    if route.get("progressState") == "confirmed_preference":
+        return "confirm_counseling_preference"
+    if route.get("progressState") in {"deferral_indecision", "decision_support"}:
+        return "support_decision"
+    if route.get("progressState") == "recommendation_ready":
+        return "recommend_directionally"
+    if route.get("routeType") == "initial_route_selection":
+        return "orient_initial_route"
+    return "explore_route"
+
+
+def response_mode_from_route(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject, posture: str | None, has_ambiguity: bool = False) -> str:
+    if boundary_result.get("allowedNextBehavior") == "handoff":
+        return "handoff_safe"
+    if boundary_result.get("allowedNextBehavior") == "clarify" or has_ambiguity:
+        return "clarify_once"
+    if route.get("progressState") == "confirmed_preference":
+        return "milestone_confirmation"
+    if route.get("progressState") in {"comparison", "decision_support", "deferral_indecision"}:
+        return "decision_support"
+    if route.get("progressState") == "detour_resume":
+        return "standard"
+    if posture == "lost_or_confused" or route.get("routeType") == "initial_route_selection":
+        return "reassuring_orientation"
+    if route.get("routeType") in {"university_exploration", "course_exploration_within_university_context"}:
+        return "route_explanation"
+    return "standard"
+
+
+def posture_from_route(route: ActiveRouteEpisode | JsonObject) -> str:
+    return {
+        "university_exploration": "course_first",
+        "course_exploration_within_university_context": "university_first",
+        "pathway_exploration": "pathway_first",
+        "combined_option_validation": "validation_seeking",
+        "course_exploration": "lost_or_confused",
+    }.get(route.get("routeType"), "just_browsing")
+
+
+def decision_support_mode(route: ActiveRouteEpisode | JsonObject) -> str | None:
+    if route.get("progressState") == "comparison":
+        return "clarify_tradeoff"
+    if route.get("progressState") == "deferral_indecision":
+        return "reflect_blocker"
+    return None
+
+
+def next_best_move(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> str:
+    if boundary_result.get("allowedNextBehavior") == "handoff":
+        return "Prepare handoff without completing any official action."
+    if boundary_result.get("allowedNextBehavior") == "clarify":
+        return "Clarify whether the student means counseling preference or official action."
+    return {
+        "detour_resume": "Answer factual detour with known facts or caveats, then resume the active route.",
+        "comparison": "Compare or shortlist options inside the active route.",
+        "confirmed_preference": "Confirm counseling preference without treating it as official action.",
+        "deferral_indecision": "Support deferral or indecision without forcing a choice.",
+        "recommendation_ready": "Give a directional recommendation or ask one route-fit question.",
+    }.get(
+        route.get("progressState"),
+        "Ask one useful question to identify the first counseling route."
+        if route.get("routeType") == "initial_route_selection"
+        else "Explore the active route and ask one purposeful next question.",
+    )
+
+
+def validation_requirements(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> list[str]:
+    return [
+        "official_action_boundary",
+        *(["handoff_safe_response"] if boundary_result.get("allowedNextBehavior") == "handoff" else []),
+        *(["route_outcome_validation"] if route.get("routeOutcomeCandidate") else []),
+        *(["route_transition_validation"] if route.get("transitionDecision", {}).get("requiresValidation") else []),
+    ]
+
+
+def current_truth_summary(current_truth: JsonObject) -> JsonObject:
+    return {
+        "academicResultStatus": current_truth["academic"]["academicResultStatus"],
+        "courseDirectionStatus": current_truth["direction"]["courseDirectionStatus"],
+        "universityDirectionStatus": current_truth["direction"]["universityDirectionStatus"],
+        "pathwayDirectionStatus": current_truth["direction"]["pathwayDirectionStatus"],
+        "routeEpisodeProjection": current_truth["routeEpisodeProjection"],
+        "routeReadiness": current_truth["route"]["routeReadiness"],
+        "preferenceStrength": current_truth["preference"]["preferenceStrength"],
+        "recommendationReadiness": current_truth["recommendationReadiness"]["level"],
+        "handoffRequired": current_truth["handoffReadiness"]["handoffRequired"],
+    }
+
+
+def active_direction_from_current_truth(current_truth: JsonObject) -> JsonObject | None:
+    preference = current_truth["preference"].get("confirmedCounselingPreference", {})
+    course = preference.get("courseOrProgram") or best_direction_value(current_truth["direction"]["activeCourseDirections"])
+    university = preference.get("university") or best_direction_value(current_truth["direction"]["activeUniversityDirections"])
+    pathway = preference.get("pathway") or best_direction_value(current_truth["direction"]["activePathwayDirections"])
+    return {**({"courseOrProgram": course} if course else {}), **({"university": university} if university else {}), **({"pathway": pathway} if pathway else {})} or None
+
+
+def best_direction_value(directions: list[JsonObject]) -> object:
+    rank = {"confirmed_counseling_preference": 3, "preferred": 2, "considering": 1}
+    return sorted(directions, key=lambda item: rank.get(item.get("status"), 0), reverse=True)[0].get("value") if directions else None

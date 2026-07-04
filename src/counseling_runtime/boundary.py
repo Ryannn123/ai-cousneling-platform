@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from .contracts import BoundaryResult, JsonObject
 
 
 BOUNDARY_RULES_BY_TYPE = {
@@ -25,12 +25,12 @@ REASONS_BY_TYPE = {
 
 
 class BoundaryEngine:
-    def evaluate(self, turn_input: dict[str, Any], accepted_semantic_delta: dict[str, Any] | None = None) -> dict[str, Any]:
+    def evaluate(self, turn_input: JsonObject, accepted_semantic_delta: JsonObject | None = None) -> BoundaryResult:
         return BoundaryResolver().resolve(accepted_semantic_delta or {})
 
 
 class BoundaryResolver:
-    def resolve(self, accepted_semantic_delta: dict[str, Any] | None = None) -> dict[str, Any]:
+    def resolve(self, accepted_semantic_delta: JsonObject | None = None) -> BoundaryResult:
         signals = [
             signal for signal in (accepted_semantic_delta or {}).get("acceptedRuntimeOnlySignals", [])
             if signal.get("kind") == "boundary"
@@ -40,24 +40,24 @@ class BoundaryResolver:
             return self.red_result(red, signals)
         yellow = next((signal for signal in signals if signal.get("type") == "ambiguous_proceed_language" or signal.get("recommendedBehavior") == "clarify_once"), None)
         if yellow:
-            return {
+            return BoundaryResult.model_validate({
                 "finalZone": "yellow",
                 "handoffStatus": "possible_clarify",
                 "detectedSignals": detected_signals(signals),
                 "aiBoundaryReason": REASONS_BY_TYPE.get(yellow.get("type"), "Boundary-sensitive ambiguity requires clarification."),
                 "requiredBoundaryRules": rules_for(signals),
                 "allowedNextBehavior": "clarify",
-            }
-        return {
+            })
+        return BoundaryResult.model_validate({
             "finalZone": "green",
             "handoffStatus": "none",
             "detectedSignals": detected_signals(signals),
             "requiredBoundaryRules": ["no-official-action-boundary"],
             "allowedNextBehavior": "continue",
-        }
+        })
 
-    def red_result(self, signal: dict[str, Any], all_signals: list[dict[str, Any]]) -> dict[str, Any]:
-        return {
+    def red_result(self, signal: JsonObject, all_signals: list[JsonObject]) -> BoundaryResult:
+        return BoundaryResult.model_validate({
             "finalZone": "red",
             "handoffStatus": "required",
             "triggerType": signal.get("triggerType") or "H1",
@@ -65,14 +65,14 @@ class BoundaryResolver:
             "aiBoundaryReason": REASONS_BY_TYPE.get(signal.get("type"), "Student is asking for a red-zone official next step."),
             "requiredBoundaryRules": rules_for(all_signals),
             "allowedNextBehavior": "handoff",
-        }
+        })
 
 
-def detected_signals(signals: list[dict[str, Any]]) -> list[str]:
+def detected_signals(signals: list[JsonObject]) -> list[str]:
     return list(dict.fromkeys(signal.get("type") for signal in signals if signal.get("type")))
 
 
-def rules_for(signals: list[dict[str, Any]]) -> list[str]:
+def rules_for(signals: list[JsonObject]) -> list[str]:
     rules = ["no-official-action-boundary"]
     for signal in signals:
         rules.extend(BOUNDARY_RULES_BY_TYPE.get(signal.get("type"), []))

@@ -313,10 +313,11 @@ def test_skill_inventory_rejects_draft_and_loads_approved(tmp_path):
 
 def test_knowledge_gateway_answers_seed_catalog_and_caveats_unknowns():
     gateway = KnowledgeGateway()
-    known = gateway.answer("What is the fee for Psychology in Kuala Lumpur?")
+    accepted_delta = {"acceptedRuntimeOnlySignals": [{"kind": "knowledge_need", "type": "fees", "query": "What is the fee for Psychology in Kuala Lumpur?", "decisionCriticality": "possibly_decision_critical"}]}
+    known = gateway.answer("What is the fee for Psychology in Kuala Lumpur?", accepted_delta)
     assert known["answerable"] is True
     assert known["facts"][0]["program"] == "Psychology"
-    unknown = gateway.answer("What is the fee for Medicine in London?")
+    unknown = gateway.answer("What is the fee for Medicine in London?", {"acceptedRuntimeOnlySignals": [{"kind": "knowledge_need", "type": "fees", "query": "What is the fee for Medicine in London?", "decisionCriticality": "decision_critical"}]})
     assert unknown["answerable"] is False
     assert unknown["uncertaintyLevel"] == "decision_critical"
 

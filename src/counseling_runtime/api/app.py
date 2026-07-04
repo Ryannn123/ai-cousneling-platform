@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from counseling_runtime.constants import COUNSELING_ACTIONS, READINESS, ROUTE_OUTCOMES, ROUTE_PROGRESS_STATES, ROUTE_TYPES
+from counseling_runtime.contracts import ConversationState, JsonObject, TurnRequest, TurnResult
 from counseling_runtime.orchestrator import CounselingTurnOrchestrator, RuntimeErrorWithStatus
 from counseling_runtime.settings import PUBLIC_DIR
 
@@ -16,12 +15,12 @@ orchestrator = CounselingTurnOrchestrator()
 
 
 @app.post("/api/conversations")
-async def create_conversation() -> dict[str, Any]:
+async def create_conversation() -> ConversationState:
     return orchestrator.create_conversation()
 
 
 @app.post("/api/turn")
-async def handle_turn(body: dict[str, Any]) -> dict[str, Any]:
+async def handle_turn(body: TurnRequest) -> TurnResult:
     return await orchestrator.handle_turn(body)
 
 
@@ -34,12 +33,12 @@ async def get_conversation(conversation_id: str):
 
 
 @app.get("/api/skills")
-async def get_skills() -> dict[str, Any]:
+async def get_skills() -> JsonObject:
     return orchestrator.get_skills()
 
 
 @app.get("/api/labels")
-async def get_labels() -> dict[str, Any]:
+async def get_labels() -> JsonObject:
     return {"actions": COUNSELING_ACTIONS, "readiness": READINESS, "routes": ROUTE_TYPES, "progressStates": ROUTE_PROGRESS_STATES, "routeOutcomes": ROUTE_OUTCOMES}
 
 
