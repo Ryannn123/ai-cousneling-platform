@@ -6,6 +6,7 @@ from uuid import uuid4
 from .audit import AuditEventStore
 from .contracts import BoundaryResult, JsonObject, MemoryCommitResult, SkillSelection, ValidationResult
 from .safety import contains_official_truth
+from .schemas import AIExecutionResult
 from .settings import MEMORY_EVENTS_PATH
 from .storage import append_ndjson, read_ndjson
 
@@ -255,13 +256,14 @@ class MemoryStateService:
     def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: JsonObject, current_truth_before_commit: JsonObject) -> MemoryCommitResult:
         return self.commit_decisions(student_id, accepted_semantic_delta, None, self.ingestion_policy.pre_response_decisions(student_id, accepted_semantic_delta, current_truth_before_commit))
 
-    def commit_post_response_ai_outputs(self, student_id: str, accepted_semantic_delta: JsonObject, validated_ai_output: JsonObject, validation_result: ValidationResult | JsonObject, final_boundary_result: BoundaryResult | JsonObject, selected_skill_context: SkillSelection | JsonObject) -> MemoryCommitResult:
+    def commit_post_response_ai_outputs(self, student_id: str, accepted_semantic_delta: JsonObject, validated_ai_output: AIExecutionResult | JsonObject, validation_result: ValidationResult | JsonObject, final_boundary_result: BoundaryResult | JsonObject, selected_skill_context: SkillSelection | JsonObject) -> MemoryCommitResult:
+        ai_output_json = validated_ai_output.model_dump(exclude_none=True) if isinstance(validated_ai_output, AIExecutionResult) else validated_ai_output
         validation_json = validation_result.to_json_dict() if isinstance(validation_result, ValidationResult) else validation_result
         boundary_json = final_boundary_result.to_json_dict() if isinstance(final_boundary_result, BoundaryResult) else final_boundary_result
         skill_json = selected_skill_context.to_json_dict() if isinstance(selected_skill_context, SkillSelection) else selected_skill_context
         if validation_json.get("status") not in {"accepted", "downgraded", "blocked", "clarify", "handoff_override"}:
             return empty_commit_result()
-        return self.commit_decisions(student_id, accepted_semantic_delta, skill_json, self.ingestion_policy.post_response_decisions(student_id, accepted_semantic_delta, validated_ai_output, validation_json, boundary_json, skill_json))
+        return self.commit_decisions(student_id, accepted_semantic_delta, skill_json, self.ingestion_policy.post_response_decisions(student_id, accepted_semantic_delta, ai_output_json, validation_json, boundary_json, skill_json))
 
     def commit_decisions(self, student_id: str, accepted_semantic_delta: JsonObject, selected_skill_context: SkillSelection | JsonObject | None, decisions: list[JsonObject]) -> MemoryCommitResult:
         result = empty_commit_result()

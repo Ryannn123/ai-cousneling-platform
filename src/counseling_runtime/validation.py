@@ -10,17 +10,18 @@ from .safety import (
     contains_non_official_clarification,
     contains_old_minimum_profile_language,
 )
+from .schemas import AIExecutionResult
 
 
 class ValidationPipeline:
     def __init__(self, route_outcome_validator: RouteOutcomeValidator | None = None) -> None:
         self.route_outcome_validator = route_outcome_validator or RouteOutcomeValidator()
 
-    def validate(self, ai_execution_result: JsonObject, boundary_result: BoundaryResult | JsonObject, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: JsonObject) -> ValidationResult:
+    def validate(self, ai_execution_result: AIExecutionResult | JsonObject, boundary_result: BoundaryResult | JsonObject, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: JsonObject) -> ValidationResult:
         validation_events: list[JsonObject] = []
         blocked_outputs: list[JsonObject] = []
         accepted_recommendations: list[JsonObject] = []
-        final_response = ai_execution_result["response"]["studentMessage"]
+        final_response = response_text(ai_execution_result)
         status = "accepted"
 
         if boundary_result.get("allowedNextBehavior") == "handoff":
@@ -46,7 +47,8 @@ class ValidationPipeline:
             final_response = "Let me keep this focused on the current counseling route. We can continue safely with one next step without treating the route as complete yet."
             status = "safe_fallback"
 
-        for output in ai_execution_result.get("proposedOutputs", {}).get("recommendationOutputs", []):
+        proposed_outputs = proposed_outputs_dict(ai_execution_result)
+        for output in proposed_outputs.get("recommendationOutputs", []):
             if output.get("confidence") == "high" and operating_context.get("recommendationReadiness") != "R3":
                 accepted_recommendations.append({**output, "confidence": "medium"})
                 status = "downgraded" if status == "accepted" else status
@@ -56,7 +58,7 @@ class ValidationPipeline:
 
         accepted_handoff = None
         if boundary_result.get("allowedNextBehavior") == "handoff":
-            accepted_handoff = ai_execution_result.get("proposedOutputs", {}).get("handoffOutput") or {"required": True, "triggerType": boundary_result.get("triggerType"), "reason": boundary_result.get("aiBoundaryReason"), "summary": "Red-zone handoff required."}
+            accepted_handoff = proposed_outputs.get("handoffOutput") or {"required": True, "triggerType": boundary_result.get("triggerType"), "reason": boundary_result.get("aiBoundaryReason"), "summary": "Red-zone handoff required."}
 
         route_outcome_validation = self.route_outcome_validator.validate(operating_context, accepted_semantic_delta, boundary_result)
         validation_events.extend(route_outcome_validation.get("validationEvents", []))
@@ -68,13 +70,31 @@ class ValidationPipeline:
         return ValidationResult.model_validate({
             "status": status,
             "finalResponse": final_response,
-            "acceptedContextUpdate": ai_execution_result.get("proposedContextUpdate") or {},
+            "acceptedContextUpdate": context_update(ai_execution_result),
             "acceptedOutputs": {"recommendationOutputs": accepted_recommendations, "handoffOutput": accepted_handoff, "routeOutcomeOutput": route_outcome_validation.get("routeOutcomeOutput")},
             "blockedOutputs": blocked_outputs,
             "validationEvents": validation_events,
             "routeOutcomeValidation": route_outcome_validation,
             "acceptedOperatingContext": accepted_operating_context,
         })
+
+
+def response_text(ai_execution_result: AIExecutionResult | JsonObject) -> str:
+    if isinstance(ai_execution_result, AIExecutionResult):
+        return ai_execution_result.response.studentMessage
+    return ai_execution_result["response"]["studentMessage"]
+
+
+def proposed_outputs_dict(ai_execution_result: AIExecutionResult | JsonObject) -> JsonObject:
+    if isinstance(ai_execution_result, AIExecutionResult):
+        return ai_execution_result.proposedOutputs.model_dump(exclude_none=True)
+    return ai_execution_result.get("proposedOutputs", {})
+
+
+def context_update(ai_execution_result: AIExecutionResult | JsonObject) -> JsonObject:
+    if isinstance(ai_execution_result, AIExecutionResult):
+        return ai_execution_result.proposedContextUpdate
+    return ai_execution_result.get("proposedContextUpdate") or {}
 
 
 def validate_response_alignment(final_response: str, operating_context: JsonObject) -> JsonObject:

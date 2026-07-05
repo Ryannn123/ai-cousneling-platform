@@ -14,6 +14,7 @@ from .contracts import (
     SkillSelection,
     ValidationResult,
 )
+from .schemas import AIExecutionResult, SemanticDeltaResult
 from .settings import AUDIT_PATH
 from .storage import append_ndjson, read_ndjson
 
@@ -83,7 +84,7 @@ def build_turn_audit_payload(
     previous_state: JsonObject,
     committed_operating_context: JsonObject,
     skill_selection: SkillSelection,
-    ai_execution_result: JsonObject,
+    ai_execution_result: AIExecutionResult | JsonObject,
     validation_result: ValidationResult,
     commit_result: CommitResult,
     current_truth_before_turn: JsonObject,
@@ -93,7 +94,7 @@ def build_turn_audit_payload(
     post_response_memory_commit_result: MemoryCommitResult,
     response_retry: JsonObject | None,
     route_candidate: RouteCandidate,
-    raw_semantic_delta: JsonObject,
+    raw_semantic_delta: SemanticDeltaResult | JsonObject,
     accepted_semantic_delta: JsonObject,
 ) -> JsonObject:
     return {
@@ -124,7 +125,7 @@ def build_turn_audit_payload(
     }
 
 
-def semantic_delta_audit(raw_semantic_delta: JsonObject, accepted_semantic_delta: JsonObject) -> JsonObject:
+def semantic_delta_audit(raw_semantic_delta: SemanticDeltaResult | JsonObject, accepted_semantic_delta: JsonObject) -> JsonObject:
     runtime_signals = accepted_semantic_delta.get("acceptedRuntimeOnlySignals", [])
     return {
         "rawSemanticDelta": raw_semantic_delta,

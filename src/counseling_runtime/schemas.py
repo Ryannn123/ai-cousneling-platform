@@ -25,7 +25,19 @@ class BaseDelta(BaseModel):
 
 class DirectionDelta(BaseDelta):
     value: str
-    status: Literal["considering", "preferred", "confirmed_counseling_preference", "rejected"] = "considering"
+    status: Literal["considering", "preferred", "confirmed_counseling_preference", "rejected"] = Field(
+        description="""The student's current counseling stance toward this option.
+
+    - considering: The student is exploring or evaluating the option without expressing a clear preference.
+    - preferred: The student expresses a stronger preference over alternatives but has not explicitly confirmed it.
+    - confirmed_counseling_preference: The student explicitly confirms this as their current counseling preference.
+    - rejected: The student explicitly indicates they are no longer considering this option.
+    """
+    )
+    
+
+class UniversityDirectionDelta(DirectionDelta):
+    type: Literal['private', 'public']
 
 
 class AcademicResultDelta(BaseDelta):
@@ -33,7 +45,7 @@ class AcademicResultDelta(BaseDelta):
 
 
 class QualityEnhancingDelta(BaseDelta):
-    type: Literal["concern", "constraint", "preference", "other"] = Field(
+    type: Literal["concern", "concern_or_blocker", "constraint", "preference", "influence_or_context", "other"] = Field(
         description="""The semantic category of the extracted context.
 
     - concern: A worry, obstacle, uncertainty, or issue affecting the student's decision.
@@ -80,9 +92,16 @@ class RuntimeSignalBase(BaseModel):
 
 
 BoundarySignalType = Literal[
+    "ready_to_apply_or_register",
+    "official_action_request",
+    "payment_or_seat_request",
+    "exception_or_waiver_request",
+    "sensitive_context",
+    "human_requested_support",
+    "ambiguous_proceed_language",
     "official_transaction",
     "complex_or_sensitive_case",
-    "human_support_request"
+    "human_support_request",
 ]
 
 
@@ -91,15 +110,26 @@ class BoundarySignal(RuntimeSignalBase):
     type: BoundarySignalType
     severityCandidate: Literal["yellow", "red"]
     recommendedBehavior: Literal["clarify_once", "handoff"]
+    triggerType: Literal["H1", "H2", "H3", "H4", "H5", "H6"] | None = None
 
 
 class KnowledgeNeedSignal(RuntimeSignalBase):
     kind: Literal["knowledge_need"]
     type: Literal["fees", "entry_requirements", "ranking", "program_details", "pathway", "other"]
     query: str
+    decisionCriticality: Literal["minor", "possibly_decision_critical", "decision_critical"] = "possibly_decision_critical"
 
 
 StudentPosture = Literal[
+    "lost_or_confused",
+    "course_first",
+    "university_first",
+    "pathway_first",
+    "comparison_oriented",
+    "decision_ready",
+    "human_help_seeking",
+    "validation_seeking",
+    "just_browsing",
     "exploring",
     "uncertain",
     "comparison_mode",
@@ -117,8 +147,11 @@ class StudentPostureSignal(RuntimeSignalBase):
         "prepare_handoff",
         "compare_options",
         "confirm_preference",
+        "route_to_university_exploration",
+        "route_to_course_exploration",
         "reassure_and_orient",
         "support_decision",
+        "continue_current_route",
     ]
     suggestedResponseMode: Literal[
         "handoff_safe",
@@ -190,12 +223,27 @@ type RuntimeOnlySignal = Annotated[
 
 class FlowDrivingDeltas(BaseModel):
     academicResults: list[AcademicResultDelta] = Field(default_factory=list)
-    coursesConsidering: list[DirectionDelta] = Field(default_factory=list)
-    confirmedCounselingCoursePreferences: DirectionDelta | None = None
-    universitiesConsidering: list[DirectionDelta] = Field(default_factory=list)
-    confirmedCounselingUniversityPreferences: DirectionDelta | None = None
-    pathwaysConsidering: list[DirectionDelta] = Field(default_factory=list)
-    confirmedCounselingPathwayPreferences: DirectionDelta | None = None
+    coursesConsidering: list[DirectionDelta] = Field(
+        default_factory=list,
+        description='Courses or programs the student is currently considering, exploring, or expressing interest in')
+    confirmedCounselingCoursePreferences: DirectionDelta | None = Field(
+        default=None,
+        description='The course or program the student explicitly confirms as their current counseling preference'
+    )
+    universitiesConsidering: list[UniversityDirectionDelta] = Field(
+        default_factory=list,
+        description='Universities or institutions the student is currently considering, exploring, or expressing interest in')
+    confirmedCounselingUniversityPreferences: UniversityDirectionDelta | None = Field(
+        default=None,
+        description='The university the student explicitly confirms as their current counseling preference'
+    )
+    pathwaysConsidering: list[DirectionDelta] = Field(
+        default_factory=list,
+        description='Study pathways the student is currently considering or exploring (e.g. Foundation, Diploma, Degree, Transfer).')
+    confirmedCounselingPathwayPreferences: DirectionDelta | None = Field(
+        default=None,
+        description='The study pathway the student explicitly confirms as their current counseling preference'
+    )
 
 
 class MemoryDeltaCandidates(BaseModel):

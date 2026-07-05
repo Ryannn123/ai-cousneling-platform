@@ -6,7 +6,7 @@ from typing import Any
 from pydantic_ai import Agent
 
 from .contracts import ExecutionContext, JsonObject, TurnInput
-from .schemas import AIExecutionResult, SemanticDeltaResult, dump
+from .schemas import AIExecutionResult, SemanticDeltaResult
 from .settings import Settings, get_settings
 from .storage import jsonable
 
@@ -36,12 +36,12 @@ class AISemanticDeltaExtractor:
         self.model = self.settings.model_name
         self.agent = agent
 
-    async def extract(self, turn_input: TurnInput | JsonObject) -> JsonObject:
+    async def extract(self, turn_input: TurnInput | JsonObject) -> SemanticDeltaResult:
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for semantic extraction")
         agent = self.agent or Agent(self.settings.pydantic_ai_model, system_prompt=SEMANTIC_PROMPT, output_type=SemanticDeltaResult)
         result = await agent.run(json.dumps(semantic_delta_input(turn_input), indent=2))
-        return dump(result.output)
+        return result.output if isinstance(result.output, SemanticDeltaResult) else SemanticDeltaResult.model_validate(result.output)
 
 
 class AIExecutionClient:
@@ -52,12 +52,12 @@ class AIExecutionClient:
         self.model = self.settings.model_name
         self.agent = agent
 
-    async def execute(self, execution_context: ExecutionContext | JsonObject) -> JsonObject:
+    async def execute(self, execution_context: ExecutionContext | JsonObject) -> AIExecutionResult:
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for execution")
         agent = self.agent or Agent(self.settings.pydantic_ai_model, system_prompt=SYSTEM_PROMPT, output_type=AIExecutionResult)
         result = await agent.run(build_response_prompt(execution_context))
-        return dump(result.output)
+        return result.output if isinstance(result.output, AIExecutionResult) else AIExecutionResult.model_validate(result.output)
 
 
 def semantic_delta_input(turn_input: TurnInput | JsonObject) -> JsonObject:

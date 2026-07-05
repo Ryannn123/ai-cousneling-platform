@@ -28,7 +28,7 @@ class MockSemanticDeltaExtractor:
     model = "test"
 
     async def extract(self, turn_input):
-        return mock_semantic_delta(turn_input)
+        return SemanticDeltaResult.model_validate(mock_semantic_delta(turn_input))
 
 
 class MockExecutionClient:
@@ -188,12 +188,12 @@ def mock_semantic_delta(turn_input):
 
 def execution_result(intent, message, extra=None, flags=None):
     extra = extra or {}
-    return {
+    return AIExecutionResult.model_validate({
         "response": {"studentMessage": message, "responseIntent": intent},
         "proposedContextUpdate": extra.get("proposedContextUpdate", {}),
         "proposedOutputs": {"recommendationOutputs": extra.get("recommendationOutputs", []), **({"handoffOutput": extra["handoffOutput"]} if extra.get("handoffOutput") else {})},
         "validationFlags": flags or {"needsClarification": False, "boundarySensitive": False, "officialActionRisk": False, "memoryWriteRequiresValidation": True, "knowledgeUsed": False, "knowledgeUncertain": False},
-    }
+    })
 
 
 def mock_execution(execution_context):
@@ -346,7 +346,7 @@ async def test_gemini_client_uses_pydantic_ai_structured_output():
 
     client = AIExecutionClient(settings=Settings(gemini_api_key="test-key", gemini_model="gemini-test"), agent=FakeAgent())
     result = await client.execute({"studentMessage": "Hello", "responsePlan": {}, "skill": {"body": "# Skill"}})
-    assert result["response"]["studentMessage"] == "Gemini response"
+    assert result.response.studentMessage == "Gemini response"
     assert "## Runtime Skill" in build_response_prompt({"studentMessage": "Hello", "skill": {"body": "# Skill"}})
 
 

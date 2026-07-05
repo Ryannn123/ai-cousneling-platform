@@ -4,6 +4,8 @@ from typing import Any, KeysView, ValuesView, ItemsView, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .schemas import AIExecutionResult, SemanticDeltaResult
+
 
 JsonObject = dict[str, Any]
 
@@ -119,12 +121,12 @@ class SemanticDeltaExtractor(Protocol):
     provider: str
     model: str
 
-    async def extract(self, turn_input: TurnInput | JsonObject) -> JsonObject:
+    async def extract(self, turn_input: TurnInput | JsonObject) -> SemanticDeltaResult:
         ...
 
 
 class ExecutionClient(Protocol):
-    async def execute(self, execution_context: ExecutionContext | JsonObject) -> JsonObject:
+    async def execute(self, execution_context: ExecutionContext | JsonObject) -> AIExecutionResult:
         ...
 
 
@@ -185,7 +187,7 @@ class CommitResult(RuntimeModel):
 class TurnResult(RuntimeModel):
     finalResponse: str
     runtimeState: ConversationState | None
-    rawSemanticDelta: JsonObject
+    rawSemanticDelta: SemanticDeltaResult | JsonObject
     acceptedSemanticDelta: JsonObject
     boundaryResult: BoundaryResult
     operatingContext: JsonObject

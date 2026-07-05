@@ -14,6 +14,9 @@ BOUNDARY_TYPES = {
     "sensitive_context",
     "human_requested_support",
     "ambiguous_proceed_language",
+    "official_transaction",
+    "complex_or_sensitive_case",
+    "human_support_request",
 }
 
 
@@ -79,17 +82,12 @@ def validate_quality(deltas: list[JsonObject], rejected: list[JsonObject], event
         if delta.get("usefulness") == "low":
             reject(rejected, events, path, delta, "quality_signal_low_usefulness", "quality_signal_ignored")
             del deltas[index]
-        elif not has_required_evidence(path, delta, rejected, events):
-            del deltas[index]
 
 
 def validate_signals(signals: list[JsonObject], rejected: list[JsonObject], events: list[JsonObject]) -> None:
     for index in range(len(signals) - 1, -1, -1):
         signal = signals[index]
         path = f"acceptedRuntimeOnlySignals.{index}"
-        if not has_required_evidence(path, signal, rejected, events):
-            del signals[index]
-            continue
         if signal.get("kind") == "boundary" and signal.get("type") not in BOUNDARY_TYPES:
             reject(rejected, events, path, signal, "boundary_type_invalid")
             del signals[index]
@@ -101,9 +99,7 @@ def validate_delta_list(path: str, deltas: list[JsonObject], rejected: list[Json
     for index in range(len(deltas) - 1, -1, -1):
         delta = deltas[index]
         candidate_path = f"{path}.{index}"
-        if not has_required_evidence(candidate_path, delta, rejected, events):
-            del deltas[index]
-        elif contains_official_truth(delta):
+        if contains_official_truth(delta):
             reject(rejected, events, candidate_path, delta, "official_action_not_memory_delta")
             del deltas[index]
 
@@ -114,9 +110,8 @@ def validate_confirmed_preference(flow: JsonObject, label: str, list_key: str, r
     path = f"acceptedMemoryDeltas.flowDrivingDeltas.{confirmed_key}"
     if not delta:
         return
-    if not has_required_evidence(path, delta, rejected, events) or not has_meaningful_value(delta):
-        if not has_meaningful_value(delta):
-            reject(rejected, events, path, delta, "delta_value_missing")
+    if not has_meaningful_value(delta):
+        reject(rejected, events, path, delta, "delta_value_missing")
         flow[confirmed_key] = None
         return
     direct_quote = " ".join(item.get("quote", "") for item in delta.get("evidence", []))
@@ -145,14 +140,6 @@ def preserve_human_help_posture(signals: list[JsonObject], events: list[JsonObje
             "promotionRisk": "official_action_risk",
         })
         events.append({"type": "posture_boundary_signal_preserved", "severity": "warning", "message": "Human-help posture preserved as H6 boundary candidate."})
-
-
-def has_required_evidence(path: str, candidate: JsonObject, rejected: list[JsonObject], events: list[JsonObject]) -> bool:
-    if not any(isinstance(item, dict) and str(item.get("quote", "")).strip() for item in candidate.get("evidence", [])):
-        reject(rejected, events, path, candidate, "missing_evidence")
-        return False
-    events.append({"type": "evidence_validated", "severity": "info", "message": f"{path} has evidence."})
-    return True
 
 
 def build_metadata(turn_input: TurnInput | JsonObject, extractor: object | None, skill_context: JsonObject | None) -> JsonObject:
