@@ -35,6 +35,8 @@ class CounselingPreferenceFact:
     dimension: str
     value: Any
     source: FactSource
+    status: str
+    university_type: str | None
 
 
 @dataclass(slots=True, frozen=True)

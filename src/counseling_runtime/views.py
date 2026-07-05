@@ -47,7 +47,6 @@ def current_truth_for_response(current_truth: CurrentTruthProjection) -> JsonObj
         "qualityContext": {
             "hardConstraints": values(current_truth.quality_context.hard_constraints),
             "softPreferences": values(current_truth.quality_context.soft_preferences),
-            "influenceOrContext": values(current_truth.quality_context.influence_or_context),
         },
         "blockers": values(current_truth.decision_blockers),
         "recommendationHistory": current_truth.recommendation_history.to_json_dict(),

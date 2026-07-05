@@ -77,7 +77,7 @@ class AcademicResultDelta(BaseDelta):
 
 
 class QualityEnhancingDelta(BaseDelta):
-    type: Literal["concern", "concern", "constraint", "preference", "influence_or_context", "other"] = Field(
+    type: Literal["concern", "concern", "constraint", "preference", "other"] = Field(
         description="""The semantic category of the extracted context.
 
     - concern: A worry, obstacle, uncertainty, or issue affecting the student's decision.

@@ -89,10 +89,13 @@ class CurrentTruthDraft:
         self.preference.strength = "L4"
         if fact.dimension == "course":
             preference.course_or_program = fact.value
+            upsert_direction(self.course, DirectionFact("course", fact.value, fact.status, None, fact.source))
         if fact.dimension == "university":
             preference.university = fact.value
+            upsert_direction(self.course, DirectionFact("university", fact.value, fact.status, fact.university_type, fact.source))
         if fact.dimension == "pathway":
             preference.pathway = fact.value
+            upsert_direction(self.course, DirectionFact("pathway", fact.value, fact.status, None, fact.source))
         preference.confidence = fact.source.confidence
         preference.supporting_event_ids = [*preference.supporting_event_ids, fact.source.event_id]
 
@@ -101,8 +104,7 @@ class CurrentTruthDraft:
         if fact.category == "constraint":
             self.quality_context.hard_constraints.append(value)
         elif fact.category == "quality_context":
-            target = self.quality_context.influence_or_context if fact.signal_type == "influence_or_context" else self.quality_context.soft_preferences
-            target.append(value)
+            self.quality_context.soft_preferences.append(value)
         elif fact.category == "concern":
             self.decision_blockers.append(value)
 

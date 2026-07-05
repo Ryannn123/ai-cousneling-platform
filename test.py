@@ -5,11 +5,12 @@ from pydantic import BaseModel
 from typing import Literal
 from dotenv import load_dotenv
 from uuid import uuid4
+from dataclasses import asdict
 
 from counseling_runtime.contracts import TurnInput
 from counseling_runtime.llm import AISemanticDeltaExtractor
 from counseling_runtime.semantic_delta import SemanticDeltaValidator
-from counseling_runtime.schemas import SemanticDeltaResult, MemoryDeltaCandidates, FlowDrivingDeltas, DirectionDelta, Evidence
+from counseling_runtime.schemas import SemanticDeltaResult, MemoryDeltaCandidates, FlowDrivingDeltas, DirectionDelta, Evidence, AcademicResultDelta, QualityEnhancingDelta
 from counseling_runtime.memory import MemoryStateService
 
 load_dotenv()
@@ -29,27 +30,39 @@ async def run():
     validator = SemanticDeltaValidator()
     memory_service = MemoryStateService()
     
-    # delta_result = SemanticDeltaResult(
-    #     memoryDeltaCandidates=MemoryDeltaCandidates(
-    #         flowDrivingDeltas=FlowDrivingDeltas(
-    #             directions=[DirectionDelta(
-    #                 confidence='high',
-    #                 dimension='university',
-    #                 evidence=[Evidence(quote='')],
-    #                 operation='add_new',
-    #                 status='considering',
-    #                 value='a'
-    #                 ),
-    #             ]
-    #         )
-    #     )
-    # )
+    delta_result = SemanticDeltaResult(
+        memoryDeltaCandidates=MemoryDeltaCandidates(
+            flowDrivingDeltas=FlowDrivingDeltas(
+                directions=[
+                    DirectionDelta(
+                        confidence='high',
+                        operation='add_new',
+                        universityType=None,
+                        evidence=[Evidence(quote='IT')],
+                        dimension='course',
+                        status='confirmed_counseling_preference',
+                        value='IT',
+                    )
+                ]
+            ),
+            # qualityEnhancingDeltas=[
+            #     QualityEnhancingDelta(
+            #         confidence='high',
+            #         operation='add_new',
+            #         sensitivity='none',
+            #         usefulness='high',
+            #         evidence=[Evidence(quote='logic')],
+            #         type='preference',
+            #         constraintStrength='soft_preference',
+            #         value={'prefer': 'logic'}
+            #     )
+            # ]
+        )
+    )
    
-    delta_result = await extractor.extract(turn_input)
-    validated_delta = validator.validate(delta_result, turn_input, extractor)
-    pprint(validated_delta.to_json_dict())
-    print('='*30)
-    commit_result = memory_service.commit_pre_response_student_memory(student_id, validated_delta)
+    # delta_result = await extractor.extract(turn_input)
+    # validated_delta = validator.validate(delta_result, turn_input, extractor)
+    # memory_service.commit_pre_response_student_memory(student_id, validated_delta)
     truth = memory_service.derive_current_truth(student_id)
     pprint(truth.to_json_dict())
     

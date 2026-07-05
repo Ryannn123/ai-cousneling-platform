@@ -53,7 +53,7 @@ def fact_from_event(event: DurableMemoryEvent) -> CurrentTruthFact | None:
         option_type = direction_option_type(category)
         return DirectionFact(option_type, payload.value, payload.status, payload.university_type, source) if option_type else None
     if category == "counseling_preference" and isinstance(payload, CounselingPreferencePayload):
-        return CounselingPreferenceFact(payload.dimension, payload.value, source)
+        return CounselingPreferenceFact(payload.dimension, payload.value, source, payload.status, payload.university_type)
     if category == "rejected_option" and isinstance(payload, RejectedOptionPayload):
         return RejectedOptionFact(payload.option_type, payload.value, source)
     if category in {"constraint", "quality_context", "concern"} and isinstance(payload, QualitySignalPayload):

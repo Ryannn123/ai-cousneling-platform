@@ -206,20 +206,18 @@ class ReadinessProjection:
 class QualityContextProjection:
     hard_constraints: list[SupportingValue] = field(default_factory=list)
     soft_preferences: list[SupportingValue] = field(default_factory=list)
-    influence_or_context: list[SupportingValue] = field(default_factory=list)
     summary: str = ""
 
     def has_fit_signal(self) -> bool:
-        return bool(self.hard_constraints or self.soft_preferences or self.influence_or_context)
+        return bool(self.hard_constraints or self.soft_preferences)
 
     def all_items(self) -> list[SupportingValue]:
-        return [*self.hard_constraints, *self.soft_preferences, *self.influence_or_context]
+        return [*self.hard_constraints, *self.soft_preferences]
 
     def to_json_dict(self) -> JsonObject:
         return {
             "hardConstraints": [item.to_json_dict() for item in self.hard_constraints],
             "softPreferences": [item.to_json_dict() for item in self.soft_preferences],
-            "influenceOrContext": [item.to_json_dict() for item in self.influence_or_context],
             "summary": self.summary,
         }
 
