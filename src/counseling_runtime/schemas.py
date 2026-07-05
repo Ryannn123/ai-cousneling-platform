@@ -31,7 +31,9 @@ class BaseDelta(BaseModel):
 
 
 class DirectionDelta(BaseDelta):
+    dimension: Literal["course", "university", "pathway"]
     value: str
+    universityType: Literal["private", "public"] | None = None
     status: Literal["considering", "preferred", "confirmed_counseling_preference", "rejected"] = Field(
         description="""The student's current counseling stance toward this option.
 
@@ -48,10 +50,6 @@ class DirectionDelta(BaseDelta):
         if not value.strip():
             raise ValueError("value must not be empty")
         return value
-    
-
-class UniversityDirectionDelta(DirectionDelta):
-    type: Literal['private', 'public']
 
 
 class AcademicResultDelta(BaseDelta):
@@ -256,26 +254,9 @@ type RuntimeOnlySignal = Annotated[
 
 class FlowDrivingDeltas(BaseModel):
     academicResults: list[AcademicResultDelta] = Field(default_factory=list)
-    coursesConsidering: list[DirectionDelta] = Field(
+    directions: list[DirectionDelta] = Field(
         default_factory=list,
-        description='Courses or programs the student is currently considering, exploring, or expressing interest in')
-    confirmedCounselingCoursePreferences: DirectionDelta | None = Field(
-        default=None,
-        description='The course or program the student explicitly confirms as their current counseling preference'
-    )
-    universitiesConsidering: list[UniversityDirectionDelta] = Field(
-        default_factory=list,
-        description='Universities or institutions the student is currently considering, exploring, or expressing interest in')
-    confirmedCounselingUniversityPreferences: UniversityDirectionDelta | None = Field(
-        default=None,
-        description='The university the student explicitly confirms as their current counseling preference'
-    )
-    pathwaysConsidering: list[DirectionDelta] = Field(
-        default_factory=list,
-        description='Study pathways the student is currently considering or exploring (e.g. Foundation, Diploma, Degree, Transfer).')
-    confirmedCounselingPathwayPreferences: DirectionDelta | None = Field(
-        default=None,
-        description='The study pathway the student explicitly confirms as their current counseling preference'
+        description='Course, university, or pathway directions the student is considering, preferring, confirming, or rejecting.'
     )
 
 

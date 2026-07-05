@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from .contracts import JsonObject
 from .safety import contains_official_truth
-from .schemas import AcademicResultDelta, BaseDelta, DirectionDelta, QualityEnhancingDelta, UniversityDirectionDelta
+from .schemas import AcademicResultDelta, BaseDelta, DirectionDelta, QualityEnhancingDelta
 from .semantic_delta import AcceptedSemanticDelta, AcceptedSemanticDeltaInput, platform_metadata
 
 
 HANDOFF_OUTPUTS = {"readiness_to_register_signal", "handoff_required"}
-DirectionLike = DirectionDelta | UniversityDirectionDelta
 
 
 class MemoryIngestionPolicy:
@@ -17,18 +16,8 @@ class MemoryIngestionPolicy:
         flow = memory.flowDrivingDeltas
         for index, delta in enumerate(flow.academicResults):
             decisions.append(self.academic_decision(student_id, accepted_semantic_delta, f"flow.academicResults.{index}", delta))
-        for index, delta in enumerate(flow.coursesConsidering):
-            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.coursesConsidering.{index}", delta, "course"))
-        for index, delta in enumerate(flow.universitiesConsidering):
-            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.universitiesConsidering.{index}", delta, "university"))
-        for index, delta in enumerate(flow.pathwaysConsidering):
-            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.pathwaysConsidering.{index}", delta, "pathway"))
-        if flow.confirmedCounselingCoursePreferences:
-            decisions.append(self.confirmed_preference_decision(student_id, accepted_semantic_delta, "flow.confirmedCounselingCoursePreferences", flow.confirmedCounselingCoursePreferences, "course"))
-        if flow.confirmedCounselingUniversityPreferences:
-            decisions.append(self.confirmed_preference_decision(student_id, accepted_semantic_delta, "flow.confirmedCounselingUniversityPreferences", flow.confirmedCounselingUniversityPreferences, "university"))
-        if flow.confirmedCounselingPathwayPreferences:
-            decisions.append(self.confirmed_preference_decision(student_id, accepted_semantic_delta, "flow.confirmedCounselingPathwayPreferences", flow.confirmedCounselingPathwayPreferences, "pathway"))
+        for index, delta in enumerate(flow.directions):
+            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.directions.{index}", delta))
         for index, delta in enumerate(memory.qualityEnhancingDeltas):
             decisions.append(self.quality_decision(student_id, accepted_semantic_delta, f"qualityEnhancingDeltas.{index}", delta))
         return decisions
@@ -58,17 +47,12 @@ class MemoryIngestionPolicy:
     def academic_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: AcademicResultDelta) -> JsonObject:
         return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "academic", {"rawText": delta.value, "status": "known"})
 
-    def direction_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: DirectionLike, direction_type: str) -> JsonObject:
+    def direction_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: DirectionDelta) -> JsonObject:
         if delta.status == "rejected":
-            return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "rejected_option", {"optionType": direction_type, "value": delta.value, "status": "rejected"})
-        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, f"{direction_type}_direction", {"value": delta.value, "status": delta.status})
-
-    def confirmed_preference_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: DirectionLike, dimension: str) -> JsonObject:
-        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "counseling_preference", {
-            "dimension": dimension,
-            "value": delta.value,
-            "status": "confirmed_counseling_preference",
-        })
+            return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "rejected_option", {"optionType": delta.dimension, "value": delta.value, "status": "rejected"})
+        if delta.status == "confirmed_counseling_preference":
+            return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "counseling_preference", {"dimension": delta.dimension, "value": delta.value, "status": delta.status})
+        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, f"{delta.dimension}_direction", {"value": delta.value, "status": delta.status})
 
     def quality_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: QualityEnhancingDelta) -> JsonObject:
         category = "constraint" if delta.type == "constraint" else "concern" if delta.type == "concern" else "quality_context"

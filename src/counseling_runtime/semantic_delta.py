@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from .contracts import JsonObject, TurnInput
-from .schemas import DirectionDelta, FlowDrivingDeltas, MemoryDeltaCandidates, QualityEnhancingDelta, RuntimeOnlySignal, SemanticDeltaResult, UniversityDirectionDelta, dump
+from .schemas import FlowDrivingDeltas, MemoryDeltaCandidates, QualityEnhancingDelta, RuntimeOnlySignal, SemanticDeltaResult, dump
 
 
 SemanticDeltaStatus = Literal["accepted", "accepted_with_downgrades", "requires_clarification"]
@@ -132,8 +132,13 @@ def platform_metadata(delta: AcceptedSemanticDeltaInput) -> JsonObject:
 
 
 def validate_flow(flow: FlowDrivingDeltas, downgraded: list[DowngradedCandidate], events: list[ValidationEvent]) -> None:
-    for label, list_key in [("Course", "coursesConsidering"), ("University", "universitiesConsidering"), ("Pathway", "pathwaysConsidering")]:
-        validate_confirmed_preference(flow, label, list_key, downgraded, events)
+    for index, delta in enumerate(flow.directions):
+        path = f"acceptedMemoryDeltas.flowDrivingDeltas.directions.{index}"
+        if delta.status == "confirmed_counseling_preference" and delta.confidence == "low":
+            downgraded_delta = delta.model_copy(update={"status": "preferred"})
+            flow.directions[index] = downgraded_delta
+            downgraded.append(DowngradedCandidate(path, delta, downgraded_delta, "confirmed_preference_low_confidence"))
+            events.append(ValidationEvent("promotion_blocked", "warning", f"{path} downgraded: confirmed_preference_low_confidence."))
 
 
 def validate_quality(deltas: list[QualityEnhancingDelta], rejected: list[RejectedCandidate], events: list[ValidationEvent]) -> None:
@@ -149,20 +154,6 @@ def record_runtime_signal_events(signals: list[RuntimeOnlySignal], events: list[
     for index, _signal in enumerate(signals):
         path = f"acceptedRuntimeOnlySignals.{index}"
         events.append(ValidationEvent("runtime_signal_validated", "info", f"{path} accepted as runtime-only."))
-
-
-def validate_confirmed_preference(flow: FlowDrivingDeltas, label: str, list_key: str, downgraded: list[DowngradedCandidate], events: list[ValidationEvent]) -> None:
-    confirmed_key = f"confirmedCounseling{label}Preferences"
-    delta: DirectionDelta | UniversityDirectionDelta | None = getattr(flow, confirmed_key)
-    path = f"acceptedMemoryDeltas.flowDrivingDeltas.{confirmed_key}"
-    if not delta:
-        return
-    if delta.confidence == "low":
-        downgraded_delta = delta.model_copy(update={"status": "preferred"})
-        # getattr(flow, list_key).append(downgraded_delta)
-        setattr(flow, confirmed_key, None)
-        downgraded.append(DowngradedCandidate(path, delta, downgraded_delta, "confirmed_preference_low_confidence"))
-        events.append(ValidationEvent("promotion_blocked", "warning", f"{path} downgraded: confirmed_preference_low_confidence."))
 
 
 def build_metadata(turn_input: TurnInput | JsonObject, extractor: object | None) -> Metadata:

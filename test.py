@@ -23,20 +23,21 @@ async def run():
     delta_result = SemanticDeltaResult(
         memoryDeltaCandidates=MemoryDeltaCandidates(
             flowDrivingDeltas=FlowDrivingDeltas(
-                coursesConsidering=[DirectionDelta(
+                directions=[DirectionDelta(
                     confidence='high',
+                    dimension='course',
                     evidence=[Evidence(quote='a')],
                     operation='add_new',
                     status='considering',
                     value='a'
-                )],
-                confirmedCounselingCoursePreferences=DirectionDelta(
+                ), DirectionDelta(
                     confidence='low',
+                    dimension='course',
                     evidence=[Evidence(quote='a')],
                     operation='add_new',
                     status='confirmed_counseling_preference',
                     value='a'
-                )
+                )]
             )
         )
     )

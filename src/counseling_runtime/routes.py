@@ -297,7 +297,7 @@ def route_is_resolved(current_truth: JsonObject, route_type: str, student_messag
 
 def supports_confirmed_preference(accepted_semantic_delta: AcceptedSemanticDeltaInput) -> bool:
     flow = accepted_memory_deltas(accepted_semantic_delta).get("flowDrivingDeltas", {})
-    return bool(flow.get("confirmedCounselingCoursePreferences") or flow.get("confirmedCounselingUniversityPreferences") or flow.get("confirmedCounselingPathwayPreferences"))
+    return any(delta.get("status") == "confirmed_counseling_preference" for delta in flow.get("directions", []))
 
 
 def has_evidence(decision: JsonObject) -> bool:

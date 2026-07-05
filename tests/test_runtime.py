@@ -70,7 +70,7 @@ def includes_term(lower_text, term):
 def course_deltas(text):
     lower = text.lower()
     return [
-        {**base_delta(text, course), "value": "IT" if course == "it" else title(course), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and includes_term(lower, course) else "considering"}
+        {**base_delta(text, course), "dimension": "course", "value": "IT" if course == "it" else title(course), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and includes_term(lower, course) else "considering"}
         for course in TEST_COURSES
         if includes_term(lower, course)
     ]
@@ -79,7 +79,7 @@ def course_deltas(text):
 def university_deltas(text):
     lower = text.lower()
     return [
-        {**base_delta(text, university), "value": title(university).replace("Apu", "APU").replace("Utar", "UTAR"), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and includes_term(lower, university) else "considering"}
+        {**base_delta(text, university), "dimension": "university", "value": title(university).replace("Apu", "APU").replace("Utar", "UTAR"), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and includes_term(lower, university) else "considering"}
         for university in TEST_UNIVERSITIES
         if includes_term(lower, university)
     ]
@@ -88,7 +88,7 @@ def university_deltas(text):
 def pathway_deltas(text):
     lower = text.lower()
     return [
-        {**base_delta(text, pathway), "value": title(pathway), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and pathway in lower else "considering"}
+        {**base_delta(text, pathway), "dimension": "pathway", "value": title(pathway), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and pathway in lower else "considering"}
         for pathway in TEST_PATHWAYS
         if pathway in lower
     ]
@@ -158,7 +158,7 @@ def posture_signal(text, flow):
         return {**base_signal(text, text), "kind": "student_posture", "posture": "comparison_oriented", "counselingImplication": "compare_options", "suggestedResponseMode": "decision_support"}
     if re.search(r"\b(my choice|choose|chosen|this option seems best|let'?s go with)\b", text, re.I):
         return {**base_signal(text, text), "kind": "student_posture", "posture": "decision_ready", "counselingImplication": "confirm_preference", "suggestedResponseMode": "milestone_confirmation"}
-    if flow["coursesConsidering"] and re.search(r"\b(don'?t know (which )?university|no university|which university)\b", text, re.I):
+    if any(delta["dimension"] == "course" for delta in flow["directions"]) and re.search(r"\b(don'?t know (which )?university|no university|which university)\b", text, re.I):
         return {**base_signal(text, text), "kind": "student_posture", "posture": "course_first", "counselingImplication": "route_to_university_exploration", "suggestedResponseMode": "route_explanation"}
     if re.search(r"\b(confused|undecided|not sure|don'?t know what course)\b", text, re.I):
         return {**base_signal(text, text), "kind": "student_posture", "posture": "lost_or_confused", "counselingImplication": "reassure_and_orient", "suggestedResponseMode": "reassuring_orientation"}
@@ -172,12 +172,14 @@ def mock_semantic_delta(turn_input):
     pathways = pathway_deltas(text)
     flow = {
         "academicResults": [academic_result_delta(text)] if academic_result_delta(text) else [],
-        "coursesConsidering": courses,
-        "confirmedCounselingCoursePreferences": confirmed_delta(text, courses),
-        "universitiesConsidering": universities,
-        "confirmedCounselingUniversityPreferences": confirmed_delta(text, universities),
-        "pathwaysConsidering": pathways,
-        "confirmedCounselingPathwayPreferences": confirmed_delta(text, pathways),
+        "directions": [
+            *courses,
+            *universities,
+            *pathways,
+            *([confirmed_delta(text, courses)] if confirmed_delta(text, courses) else []),
+            *([confirmed_delta(text, universities)] if confirmed_delta(text, universities) else []),
+            *([confirmed_delta(text, pathways)] if confirmed_delta(text, pathways) else []),
+        ],
     }
     posture = posture_signal(text, flow)
     return {
@@ -353,7 +355,7 @@ async def test_gemini_client_uses_pydantic_ai_structured_output():
 def test_semantic_delta_validator_passes_current_truth_metadata():
     accepted = SemanticDeltaValidator().validate(SemanticDeltaResult.model_validate(mock_semantic_delta({"studentMessage": "Psychology sounds interesting."})), {"conversationId": "c1", "turnId": "t1", "messageId": "m1", "studentMessage": "Psychology sounds interesting."}, MockSemanticDeltaExtractor())
     assert accepted.platform_metadata.conversationId == "c1"
-    assert accepted.accepted_memory_deltas.flowDrivingDeltas.coursesConsidering[0].value == "Psychology"
+    assert accepted.accepted_memory_deltas.flowDrivingDeltas.directions[0].value == "Psychology"
     assert accepted.to_json_dict()["platformMetadata"]["conversationId"] == "c1"
 
 
