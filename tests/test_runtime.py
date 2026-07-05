@@ -5,13 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from counseling_runtime.api.app import app
 from counseling_runtime.knowledge import KnowledgeGateway
 from counseling_runtime.llm import AIExecutionClient, build_response_prompt
 from counseling_runtime.memory import AuditEventStore, MemoryEventStore, MemoryStateService
 from counseling_runtime.orchestrator import CounselingTurnOrchestrator
-from counseling_runtime.schemas import AIExecutionResult, AIResponse, ProposedOutputs, ValidationFlags
+from counseling_runtime.schemas import AIExecutionResult, AIResponse, ProposedOutputs, SemanticDeltaResult, ValidationFlags
 from counseling_runtime.semantic_delta import SemanticDeltaValidator
 from counseling_runtime.settings import Settings
 from counseling_runtime.skills import SkillControlService
@@ -353,3 +354,17 @@ def test_semantic_delta_validator_passes_current_truth_metadata():
     accepted = SemanticDeltaValidator().validate(mock_semantic_delta({"studentMessage": "Psychology sounds interesting."}), {"conversationId": "c1", "turnId": "t1", "messageId": "m1", "studentMessage": "Psychology sounds interesting."}, MockSemanticDeltaExtractor())
     assert accepted["platformMetadata"]["conversationId"] == "c1"
     assert accepted["acceptedMemoryDeltas"]["flowDrivingDeltas"]["coursesConsidering"][0]["value"] == "Psychology"
+
+
+def test_runtime_only_signal_schema_rejects_cross_kind_fields():
+    with pytest.raises(ValidationError):
+        SemanticDeltaResult.model_validate({
+            "runtimeOnlySignalCandidates": [{
+                **base_signal("What are the fees?", "fees"),
+                "kind": "knowledge_need",
+                "type": "fees",
+                "query": "What are the fees?",
+                "decisionCriticality": "possibly_decision_critical",
+                "triggerType": "H1",
+            }]
+        })
