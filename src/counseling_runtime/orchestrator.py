@@ -158,7 +158,7 @@ class CounselingTurnOrchestrator:
             "finalResponse": validation_result["finalResponse"],
             "runtimeState": runtime_state,
             "rawSemanticDelta": raw_semantic_delta,
-            "acceptedSemanticDelta": accepted_semantic_delta,
+            "acceptedSemanticDelta": accepted_semantic_delta.to_json_dict(),
             "boundaryResult": boundary_result,
             "operatingContext": commit_result["committedContext"],
             "currentTruth": final_current_truth,

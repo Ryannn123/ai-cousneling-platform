@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 JsonDict = dict[str, Any]
@@ -22,6 +22,13 @@ class BaseDelta(BaseModel):
     confidence: Confidence
     operation: Literal["add_new"] = "add_new"
 
+    @field_validator("evidence")
+    @classmethod
+    def require_evidence(cls, evidence: list[Evidence]) -> list[Evidence]:
+        if not any(item.quote.strip() for item in evidence):
+            raise ValueError("at least one evidence quote is required")
+        return evidence
+
 
 class DirectionDelta(BaseDelta):
     value: str
@@ -34,6 +41,13 @@ class DirectionDelta(BaseDelta):
     - rejected: The student explicitly indicates they are no longer considering this option.
     """
     )
+
+    @field_validator("value")
+    @classmethod
+    def require_meaningful_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be empty")
+        return value
     
 
 class UniversityDirectionDelta(DirectionDelta):
@@ -42,6 +56,13 @@ class UniversityDirectionDelta(DirectionDelta):
 
 class AcademicResultDelta(BaseDelta):
     value: str
+
+    @field_validator("value")
+    @classmethod
+    def require_meaningful_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be empty")
+        return value
 
 
 class QualityEnhancingDelta(BaseDelta):
@@ -55,6 +76,14 @@ class QualityEnhancingDelta(BaseDelta):
     """
     )
     value: JsonDict
+
+    @field_validator("value")
+    @classmethod
+    def require_meaningful_value(cls, value: JsonDict) -> JsonDict:
+        if not value:
+            raise ValueError("value must not be empty")
+        return value
+    
     usefulness: Literal["low", "medium", "high"] = Field(
         description="""How valuable this information is for improving future counseling quality.
 
@@ -89,6 +118,13 @@ class RuntimeSignalBase(BaseModel):
     evidence: list[Evidence]
     source: SignalSource = "current_message"
     promotionRisk: PromotionRisk = "none"
+
+    @field_validator("evidence")
+    @classmethod
+    def require_evidence(cls, evidence: list[Evidence]) -> list[Evidence]:
+        if not any(item.quote.strip() for item in evidence):
+            raise ValueError("at least one evidence quote is required")
+        return evidence
 
 
 BoundarySignalType = Literal[
@@ -127,7 +163,6 @@ StudentPosture = Literal[
     "pathway_first",
     "comparison_oriented",
     "decision_ready",
-    "human_help_seeking",
     "validation_seeking",
     "just_browsing",
     "exploring",
@@ -144,7 +179,6 @@ class StudentPostureSignal(RuntimeSignalBase):
     kind: Literal["student_posture"]
     posture: StudentPosture
     counselingImplication: Literal[
-        "prepare_handoff",
         "compare_options",
         "confirm_preference",
         "route_to_university_exploration",
@@ -154,7 +188,6 @@ class StudentPostureSignal(RuntimeSignalBase):
         "continue_current_route",
     ]
     suggestedResponseMode: Literal[
-        "handoff_safe",
         "decision_support",
         "milestone_confirmation",
         "route_explanation",

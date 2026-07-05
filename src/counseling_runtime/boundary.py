@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .contracts import BoundaryResult, JsonObject, TurnInput
+from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals
 
 
 BOUNDARY_RULES_BY_TYPE = {
@@ -25,14 +26,14 @@ REASONS_BY_TYPE = {
 
 
 class BoundaryEngine:
-    def evaluate(self, turn_input: TurnInput | JsonObject, accepted_semantic_delta: JsonObject | None = None) -> BoundaryResult:
-        return BoundaryResolver().resolve(accepted_semantic_delta or {})
+    def evaluate(self, turn_input: TurnInput | JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None) -> BoundaryResult:
+        return BoundaryResolver().resolve(accepted_semantic_delta)
 
 
 class BoundaryResolver:
-    def resolve(self, accepted_semantic_delta: JsonObject | None = None) -> BoundaryResult:
+    def resolve(self, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None) -> BoundaryResult:
         signals = [
-            signal for signal in (accepted_semantic_delta or {}).get("acceptedRuntimeOnlySignals", [])
+            signal for signal in accepted_runtime_only_signals(accepted_semantic_delta)
             if signal.get("kind") == "boundary"
         ]
         red = next((signal for signal in signals if signal.get("severityCandidate") == "red" or signal.get("recommendedBehavior") == "handoff"), None)

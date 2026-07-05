@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .contracts import JsonObject, KnowledgeAnswer
+from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals
 from .settings import CATALOG_PATH
 from .storage import read_json
 
@@ -14,9 +15,9 @@ class KnowledgeGateway:
     def needs_knowledge(self, student_message: str) -> bool:
         return False
 
-    def answer(self, student_message: str, accepted_semantic_delta: JsonObject | None = None) -> KnowledgeAnswer | None:
+    def answer(self, student_message: str, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None) -> KnowledgeAnswer | None:
         signals = [
-            signal for signal in (accepted_semantic_delta or {}).get("acceptedRuntimeOnlySignals", [])
+            signal for signal in accepted_runtime_only_signals(accepted_semantic_delta)
             if signal.get("kind") == "knowledge_need"
         ]
         if not signals:

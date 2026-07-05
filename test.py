@@ -36,7 +36,14 @@ async def run():
                     operation='add_new',
                     status='considering',
                     value='a'
-                )]
+                )],
+                confirmedCounselingCoursePreferences=DirectionDelta(
+                    confidence='low',
+                    evidence=[Evidence(quote='a')],
+                    operation='add_new',
+                    status='confirmed_counseling_preference',
+                    value='a'
+                )
             )
         )
     )

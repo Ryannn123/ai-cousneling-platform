@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, TurnInput
+from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals
 
 
 def build_operating_context(
     previous_state: JsonObject,
     turn_input: TurnInput,
     boundary_result: BoundaryResult,
-    accepted_semantic_delta: JsonObject,
+    accepted_semantic_delta: AcceptedSemanticDeltaInput,
     current_truth: JsonObject,
     active_route_episode: ActiveRouteEpisode,
 ) -> JsonObject:
-    runtime_signals = accepted_semantic_delta.get("acceptedRuntimeOnlySignals", [])
+    runtime_signals = accepted_runtime_only_signals(accepted_semantic_delta)
     has_ambiguity = any(signal.get("kind") == "ambiguity" for signal in runtime_signals)
     primary_action = (
         "clarify_ambiguity"

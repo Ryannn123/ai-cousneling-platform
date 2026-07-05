@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, RouteCandidate
+from .semantic_delta import AcceptedSemanticDeltaInput, accepted_memory_deltas, accepted_runtime_only_signals
 
 class RouteEpisodeCandidateResolver:
-    def resolve(self, current_truth_projection: JsonObject, accepted_semantic_delta: JsonObject | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> RouteCandidate:
+    def resolve(self, current_truth_projection: JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> RouteCandidate:
         route_signal = next((signal for signal in route_signals(accepted_semantic_delta) if signal.get("routeHint") and signal.get("confidence") in {"medium", "high"}), None)
         route_hint = route_signal.get("routeHint") if route_signal else None
         route_type = route_hint if isinstance(route_hint, str) else derive_route_type(current_truth_projection, student_message)
@@ -26,9 +27,9 @@ class RouteEpisodePlanner:
     def __init__(self, transition_validator: "RouteTransitionValidator | None" = None) -> None:
         self.transition_validator = transition_validator or RouteTransitionValidator()
 
-    def plan(self, boundary_result: BoundaryResult | JsonObject, route_candidate: RouteCandidate, current_truth_projection: JsonObject, accepted_semantic_delta: JsonObject | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> ActiveRouteEpisode:
+    def plan(self, boundary_result: BoundaryResult | JsonObject, route_candidate: RouteCandidate, current_truth_projection: JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> ActiveRouteEpisode:
         prior = (previous_operating_context or {}).get("activeRouteEpisode")
-        runtime_signals = (accepted_semantic_delta or {}).get("acceptedRuntimeOnlySignals", [])
+        runtime_signals = accepted_runtime_only_signals(accepted_semantic_delta)
         signals = [signal for signal in runtime_signals if signal.get("kind") == "route_episode"]
         previous_route = (prior or {}).get("routeType")
         active_route = route_candidate["routeType"]
@@ -145,7 +146,7 @@ class RouteTransitionValidator:
 
 
 class RouteOutcomeValidator:
-    def validate(self, operating_context: JsonObject, accepted_semantic_delta: JsonObject, boundary_result: BoundaryResult | JsonObject) -> JsonObject:
+    def validate(self, operating_context: JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput, boundary_result: BoundaryResult | JsonObject) -> JsonObject:
         route = operating_context.get("activeRouteEpisode") or {}
         candidate = route.get("routeOutcomeCandidate")
         if not candidate:
@@ -211,8 +212,8 @@ def route_goal(route_type: str) -> str:
     }.get(route_type, "Guide the current counseling route.")
 
 
-def route_signals(accepted_semantic_delta: JsonObject | None) -> list[JsonObject]:
-    return [signal for signal in (accepted_semantic_delta or {}).get("acceptedRuntimeOnlySignals", []) if signal.get("kind") == "route_episode"]
+def route_signals(accepted_semantic_delta: AcceptedSemanticDeltaInput | None) -> list[JsonObject]:
+    return [signal for signal in accepted_runtime_only_signals(accepted_semantic_delta) if signal.get("kind") == "route_episode"]
 
 
 def evidence_from_signal(signal: JsonObject | None) -> list[JsonObject]:
@@ -294,8 +295,8 @@ def route_is_resolved(current_truth: JsonObject, route_type: str, student_messag
     return False
 
 
-def supports_confirmed_preference(accepted_semantic_delta: JsonObject) -> bool:
-    flow = accepted_semantic_delta.get("acceptedMemoryDeltas", {}).get("flowDrivingDeltas", {})
+def supports_confirmed_preference(accepted_semantic_delta: AcceptedSemanticDeltaInput) -> bool:
+    flow = accepted_memory_deltas(accepted_semantic_delta).get("flowDrivingDeltas", {})
     return bool(flow.get("confirmedCounselingCoursePreferences") or flow.get("confirmedCounselingUniversityPreferences") or flow.get("confirmedCounselingPathwayPreferences"))
 
 

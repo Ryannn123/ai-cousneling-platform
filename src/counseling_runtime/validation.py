@@ -11,13 +11,14 @@ from .safety import (
     contains_old_minimum_profile_language,
 )
 from .schemas import AIExecutionResult
+from .semantic_delta import AcceptedSemanticDeltaInput
 
 
 class ValidationPipeline:
     def __init__(self, route_outcome_validator: RouteOutcomeValidator | None = None) -> None:
         self.route_outcome_validator = route_outcome_validator or RouteOutcomeValidator()
 
-    def validate(self, ai_execution_result: AIExecutionResult | JsonObject, boundary_result: BoundaryResult | JsonObject, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: JsonObject) -> ValidationResult:
+    def validate(self, ai_execution_result: AIExecutionResult | JsonObject, boundary_result: BoundaryResult | JsonObject, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput) -> ValidationResult:
         validation_events: list[JsonObject] = []
         blocked_outputs: list[JsonObject] = []
         accepted_recommendations: list[JsonObject] = []

@@ -15,6 +15,7 @@ from .contracts import (
     ValidationResult,
 )
 from .schemas import AIExecutionResult, SemanticDeltaResult
+from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals, accepted_semantic_delta_json
 from .settings import AUDIT_PATH
 from .storage import append_ndjson, read_ndjson
 
@@ -95,7 +96,7 @@ def build_turn_audit_payload(
     response_retry: JsonObject | None,
     route_candidate: RouteCandidate,
     raw_semantic_delta: SemanticDeltaResult | JsonObject,
-    accepted_semantic_delta: JsonObject,
+    accepted_semantic_delta: AcceptedSemanticDeltaInput,
 ) -> JsonObject:
     return {
         "conversationId": conversation_id,
@@ -125,14 +126,15 @@ def build_turn_audit_payload(
     }
 
 
-def semantic_delta_audit(raw_semantic_delta: SemanticDeltaResult | JsonObject, accepted_semantic_delta: JsonObject) -> JsonObject:
-    runtime_signals = accepted_semantic_delta.get("acceptedRuntimeOnlySignals", [])
+def semantic_delta_audit(raw_semantic_delta: SemanticDeltaResult | JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput) -> JsonObject:
+    accepted_delta_json = accepted_semantic_delta_json(accepted_semantic_delta)
+    runtime_signals = accepted_runtime_only_signals(accepted_semantic_delta)
     return {
         "rawSemanticDelta": raw_semantic_delta,
-        "acceptedSemanticDelta": accepted_semantic_delta,
-        "rejectedCandidates": accepted_semantic_delta.get("rejectedCandidates"),
-        "downgradedCandidates": accepted_semantic_delta.get("downgradedCandidates"),
-        "semanticDeltaValidationEvents": accepted_semantic_delta.get("validationEvents"),
+        "acceptedSemanticDelta": accepted_delta_json,
+        "rejectedCandidates": accepted_delta_json.get("rejectedCandidates"),
+        "downgradedCandidates": accepted_delta_json.get("downgradedCandidates"),
+        "semanticDeltaValidationEvents": accepted_delta_json.get("validationEvents"),
         "acceptedStudentPostureSignal": next((signal for signal in runtime_signals if signal.get("kind") == "student_posture"), None),
         "boundaryResolutionInput": {
             "acceptedBoundaryRuntimeSignals": [signal for signal in runtime_signals if signal.get("kind") == "boundary"],

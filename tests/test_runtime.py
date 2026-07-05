@@ -153,7 +153,7 @@ def quality_deltas(text):
 
 def posture_signal(text, flow):
     if re.search(r"\b(human counselor|human counsellor|real person|talk to.*human)\b", text, re.I):
-        return {**base_signal(text, text), "kind": "student_posture", "posture": "human_help_seeking", "counselingImplication": "prepare_handoff", "suggestedResponseMode": "handoff_safe"}
+        return None
     if re.search(r"\b(compare|versus|vs|better|between)\b", text, re.I):
         return {**base_signal(text, text), "kind": "student_posture", "posture": "comparison_oriented", "counselingImplication": "compare_options", "suggestedResponseMode": "decision_support"}
     if re.search(r"\b(my choice|choose|chosen|this option seems best|let'?s go with)\b", text, re.I):
@@ -352,8 +352,8 @@ async def test_gemini_client_uses_pydantic_ai_structured_output():
 
 def test_semantic_delta_validator_passes_current_truth_metadata():
     accepted = SemanticDeltaValidator().validate(mock_semantic_delta({"studentMessage": "Psychology sounds interesting."}), {"conversationId": "c1", "turnId": "t1", "messageId": "m1", "studentMessage": "Psychology sounds interesting."}, MockSemanticDeltaExtractor())
-    assert accepted["platformMetadata"]["conversationId"] == "c1"
-    assert accepted["acceptedMemoryDeltas"]["flowDrivingDeltas"]["coursesConsidering"][0]["value"] == "Psychology"
+    assert accepted.platform_metadata["conversationId"] == "c1"
+    assert accepted.accepted_memory_deltas["flowDrivingDeltas"]["coursesConsidering"][0]["value"] == "Psychology"
 
 
 def test_runtime_only_signal_schema_rejects_cross_kind_fields():
