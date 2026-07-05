@@ -55,7 +55,7 @@ def apply_event(projection: JsonObject, event: JsonObject) -> None:
         projection["qualityContext"]["hardConstraints"].append(quality_item(event))
     elif category == "quality_context":
         (projection["qualityContext"]["influenceOrContext"] if payload.get("type") == "influence_or_context" else projection["qualityContext"]["softPreferences"]).append(quality_item(event))
-    elif category == "concern_or_blocker":
+    elif category == "concern":
         projection["decisionContext"]["currentDecisionBlockers"].append(quality_item(event))
     elif category == "handoff_readiness":
         apply_handoff_readiness(projection, event)

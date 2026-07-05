@@ -2,34 +2,34 @@ from __future__ import annotations
 
 from .contracts import JsonObject
 from .safety import contains_official_truth
-from .semantic_delta import AcceptedSemanticDeltaInput, accepted_memory_deltas, platform_metadata
+from .schemas import AcademicResultDelta, BaseDelta, DirectionDelta, QualityEnhancingDelta, UniversityDirectionDelta
+from .semantic_delta import AcceptedSemanticDelta, AcceptedSemanticDeltaInput, platform_metadata
 
 
 HANDOFF_OUTPUTS = {"readiness_to_register_signal", "handoff_required"}
+DirectionLike = DirectionDelta | UniversityDirectionDelta
 
 
 class MemoryIngestionPolicy:
-    def pre_response_decisions(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDeltaInput, current_truth_before_commit: JsonObject | None = None) -> list[JsonObject]:
+    def pre_response_decisions(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, current_truth_before_commit: JsonObject | None = None) -> list[JsonObject]:
         decisions: list[JsonObject] = []
-        memory = accepted_memory_deltas(accepted_semantic_delta)
-        flow = memory.get("flowDrivingDeltas", {})
-        for index, delta in enumerate(flow.get("academicResults", [])):
-            decisions.append(self.student_delta_decision(student_id, accepted_semantic_delta, f"flow.academicResults.{index}", delta, "academic", {"rawText": delta.get("value"), "status": "known"}))
-        for key, direction_type in [("coursesConsidering", "course"), ("universitiesConsidering", "university"), ("pathwaysConsidering", "pathway")]:
-            for index, delta in enumerate(flow.get(key, [])):
-                decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.{key}.{index}", delta, direction_type))
-        for key, direction_type in [
-            ("confirmedCounselingCoursePreferences", "course"),
-            ("confirmedCounselingUniversityPreferences", "university"),
-            ("confirmedCounselingPathwayPreferences", "pathway"),
-        ]:
-            if flow.get(key):
-                decisions.append(self.student_delta_decision(student_id, accepted_semantic_delta, f"flow.{key}", flow[key], "counseling_preference", {
-                    "dimension": direction_type,
-                    "value": flow[key].get("value"),
-                    "status": "confirmed_counseling_preference",
-                }))
-        for index, delta in enumerate(memory.get("qualityEnhancingDeltas", [])):
+        memory = accepted_semantic_delta.accepted_memory_deltas
+        flow = memory.flowDrivingDeltas
+        for index, delta in enumerate(flow.academicResults):
+            decisions.append(self.academic_decision(student_id, accepted_semantic_delta, f"flow.academicResults.{index}", delta))
+        for index, delta in enumerate(flow.coursesConsidering):
+            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.coursesConsidering.{index}", delta, "course"))
+        for index, delta in enumerate(flow.universitiesConsidering):
+            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.universitiesConsidering.{index}", delta, "university"))
+        for index, delta in enumerate(flow.pathwaysConsidering):
+            decisions.append(self.direction_decision(student_id, accepted_semantic_delta, f"flow.pathwaysConsidering.{index}", delta, "pathway"))
+        if flow.confirmedCounselingCoursePreferences:
+            decisions.append(self.confirmed_preference_decision(student_id, accepted_semantic_delta, "flow.confirmedCounselingCoursePreferences", flow.confirmedCounselingCoursePreferences, "course"))
+        if flow.confirmedCounselingUniversityPreferences:
+            decisions.append(self.confirmed_preference_decision(student_id, accepted_semantic_delta, "flow.confirmedCounselingUniversityPreferences", flow.confirmedCounselingUniversityPreferences, "university"))
+        if flow.confirmedCounselingPathwayPreferences:
+            decisions.append(self.confirmed_preference_decision(student_id, accepted_semantic_delta, "flow.confirmedCounselingPathwayPreferences", flow.confirmedCounselingPathwayPreferences, "pathway"))
+        for index, delta in enumerate(memory.qualityEnhancingDeltas):
             decisions.append(self.quality_decision(student_id, accepted_semantic_delta, f"qualityEnhancingDeltas.{index}", delta))
         return decisions
 
@@ -55,23 +55,66 @@ class MemoryIngestionPolicy:
             decisions.append(self.ai_output_decision(student_id, accepted_semantic_delta, selected_skill_context, "route.outcomeOutput", route_outcome))
         return decisions
 
-    def direction_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDeltaInput, accepted_delta_id: str, delta: JsonObject, direction_type: str) -> JsonObject:
-        if delta.get("status") == "rejected":
-            return self.student_delta_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "rejected_option", {"optionType": direction_type, "value": delta.get("value"), "status": "rejected"})
-        return self.student_delta_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, f"{direction_type}_direction", {"value": delta.get("value"), "status": delta.get("status", "considering")})
+    def academic_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: AcademicResultDelta) -> JsonObject:
+        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "academic", {"rawText": delta.value, "status": "known"})
 
-    def quality_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDeltaInput, accepted_delta_id: str, delta: JsonObject) -> JsonObject:
-        category = "constraint" if delta.get("type") == "constraint" else "concern_or_blocker" if delta.get("type") == "concern_or_blocker" else "quality_context"
-        return self.student_delta_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, category, {
-            "type": delta.get("type"),
-            "value": delta.get("value"),
-            "usefulness": delta.get("usefulness"),
-            "sensitivity": delta.get("sensitivity"),
-            "constraintStrength": delta.get("constraintStrength") or ("hard_constraint" if category == "constraint" else "soft_preference"),
+    def direction_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: DirectionLike, direction_type: str) -> JsonObject:
+        if delta.status == "rejected":
+            return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "rejected_option", {"optionType": direction_type, "value": delta.value, "status": "rejected"})
+        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, f"{direction_type}_direction", {"value": delta.value, "status": delta.status})
+
+    def confirmed_preference_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: DirectionLike, dimension: str) -> JsonObject:
+        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, "counseling_preference", {
+            "dimension": dimension,
+            "value": delta.value,
+            "status": "confirmed_counseling_preference",
         })
 
-    def student_delta_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDeltaInput, accepted_delta_id: str, delta: JsonObject, category: str, payload: JsonObject) -> JsonObject:
-        return self.create_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, category, "pre_response_student_stated_memory", payload, "may_update_current_truth")
+    def quality_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: QualityEnhancingDelta) -> JsonObject:
+        category = "constraint" if delta.type == "constraint" else "concern" if delta.type == "concern" else "quality_context"
+        return self.pre_response_decision(student_id, accepted_semantic_delta, accepted_delta_id, delta, category, {
+            "type": delta.type,
+            "value": delta.value,
+            "usefulness": delta.usefulness,
+            "sensitivity": delta.sensitivity,
+            "constraintStrength": delta.constraintStrength or ("hard_constraint" if category == "constraint" else "soft_preference"),
+        })
+
+    def pre_response_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, accepted_delta_id: str, delta: BaseDelta, category: str, payload: JsonObject) -> JsonObject:
+        delta_json = delta.model_dump(exclude_none=True)
+        official_safe = not contains_official_truth({"delta": delta_json, "payload": payload})
+        event_draft = None
+        if official_safe:
+            meta = accepted_semantic_delta.platform_metadata
+            event_draft = {
+                "studentId": student_id,
+                "category": category,
+                "operation": delta.operation,
+                "payload": payload,
+                "confidence": delta.confidence,
+                "evidence": [{"quote": item.quote, "source": "student_message"} for item in delta.evidence if item.quote.strip()],
+                "source": {
+                    "acceptedSemanticDeltaId": typed_accepted_semantic_delta_id_of(accepted_semantic_delta),
+                    "acceptedDeltaId": accepted_delta_id,
+                    "conversationId": meta.conversationId,
+                    "turnId": meta.turnId,
+                    "messageId": meta.messageId,
+                },
+                "merge": {"projectionIntent": "may_update_current_truth"},
+                "officialTruthBoundary": {"isOfficialTruth": False},
+            }
+        return {
+            "acceptedDeltaId": accepted_delta_id,
+            "decision": "create_memory_event" if event_draft else "reject",
+            "commitClass": "pre_response_student_stated_memory" if event_draft else "forbidden_official_truth",
+            "category": category,
+            "operation": delta.operation,
+            "projectionIntent": "may_update_current_truth",
+            "eventDraft": event_draft,
+            "reasons": [] if official_safe else ["official_truth_not_memory"],
+            "warnings": [],
+            "officialTruthCheck": {"passed": official_safe, "violationType": None if official_safe else "official_truth_not_memory"},
+        }
 
     def ai_output_decision(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDeltaInput, selected_skill_context: JsonObject, accepted_delta_id: str, output: JsonObject) -> JsonObject:
         category = category_for_ai_output(output)
@@ -120,6 +163,11 @@ class MemoryIngestionPolicy:
 def accepted_semantic_delta_id_of(accepted_semantic_delta: AcceptedSemanticDeltaInput) -> str:
     meta = platform_metadata(accepted_semantic_delta)
     return f"{meta.get('conversationId', 'unknown')}:{meta.get('turnId', 'unknown')}:{meta.get('messageId', 'unknown')}"
+
+
+def typed_accepted_semantic_delta_id_of(accepted_semantic_delta: AcceptedSemanticDelta) -> str:
+    meta = accepted_semantic_delta.platform_metadata
+    return f"{meta.conversationId or 'unknown'}:{meta.turnId or 'unknown'}:{meta.messageId or 'unknown'}"
 
 
 def idempotency_key_for(draft: JsonObject) -> str:

@@ -16,7 +16,7 @@ MEMORY_CATEGORIES = {
     "rejected_option",
     "constraint",
     "quality_context",
-    "concern_or_blocker",
+    "concern",
     "decision_support",
     "recommendation_interaction",
     "handoff_readiness",

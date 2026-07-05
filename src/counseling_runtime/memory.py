@@ -9,7 +9,7 @@ from .memory_ingestion import MemoryIngestionPolicy, idempotency_key_for
 from .memory_store import MemoryEventStore
 from .memory_validation import MemoryEventValidator
 from .schemas import AIExecutionResult
-from .semantic_delta import AcceptedSemanticDeltaInput
+from .semantic_delta import AcceptedSemanticDelta, AcceptedSemanticDeltaInput
 
 
 class MemoryStateService:
@@ -30,7 +30,7 @@ class MemoryStateService:
     def derive_current_truth(self, student_id: str) -> JsonObject:
         return self.current_truth_projector.project(student_id, self.memory_event_store.get_events_for_projection(student_id))
 
-    def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDeltaInput, current_truth_before_commit: JsonObject) -> MemoryCommitResult:
+    def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta, current_truth_before_commit: JsonObject) -> MemoryCommitResult:
         return self.commit_decisions(student_id, accepted_semantic_delta, None, self.ingestion_policy.pre_response_decisions(student_id, accepted_semantic_delta, current_truth_before_commit))
 
     def commit_post_response_ai_outputs(
