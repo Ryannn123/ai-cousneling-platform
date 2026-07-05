@@ -80,26 +80,32 @@ class CounselingTurnOrchestrator:
 
         student_id = conversation_id
         current_truth_before_turn = self.memory_state_service.derive_current_truth(student_id, conversation_id)
-        turn_input = TurnInput.model_validate({
-            "conversationId": conversation_id,
-            "turnId": str(uuid4()),
-            "messageId": str(uuid4()),
-            "studentMessage": student_message,
-            "previousRuntimeState": previous_state,
-            "recentConversationSummary": "\n".join(f"{message['role']}: {message['content']}" for message in previous_state.get("messages", [])[-6:]),
-            "currentTruthBeforeTurn": current_truth_for_extraction(current_truth_before_turn),
-        })
+        turn_input = TurnInput(
+            conversationId = conversation_id,
+            turnId = str(uuid4()),
+            messageId = str(uuid4()),
+            studentMessage = student_message,
+            previousRuntimeState = previous_state,
+            recentConversationSummary = "\n".join(f"{message['role']}: {message['content']}" for message in previous_state.get("messages", [])[-6:]),
+            currentTruthBeforeTurn = current_truth_for_extraction(current_truth_before_turn),
+        )
 
         raw_semantic_delta = await self.ai_semantic_delta_extractor.extract(turn_input)
         accepted_semantic_delta = self.semantic_delta_validator.validate(raw_semantic_delta, turn_input, self.ai_semantic_delta_extractor)
+        
         pre_response_memory_commit_result = self.memory_state_service.commit_pre_response_student_memory(student_id, accepted_semantic_delta, current_truth_before_turn)
         current_truth = self.memory_state_service.derive_current_truth(student_id, conversation_id, turn_input["turnId"])
+        
         route_candidate = self.route_episode_candidate_resolver.resolve(current_truth, accepted_semantic_delta, previous_state.get("operatingContext"), student_message)
         boundary_result = self.boundary_engine.evaluate(turn_input, accepted_semantic_delta)
         active_route_episode = self.route_episode_planner.plan(boundary_result, route_candidate, current_truth, accepted_semantic_delta, previous_state.get("operatingContext"), student_message)
+        
         operating_context = build_operating_context(previous_state, turn_input, boundary_result, accepted_semantic_delta, current_truth, active_route_episode)
+        
         skill_selection = self.skill_control_service.select(operating_context, boundary_result)
+        
         knowledge_answer = self.knowledge_gateway.answer(student_message, accepted_semantic_delta)
+        
         execution_context = build_execution_context(
             student_message,
             turn_input,
@@ -109,8 +115,11 @@ class CounselingTurnOrchestrator:
             skill_selection,
             knowledge_answer,
         )
+        
         ai_execution_result = await self.ai_execution_client.execute(execution_context)
+        
         validation_result = self.validation_pipeline.validate(ai_execution_result, boundary_result, operating_context, skill_selection, accepted_semantic_delta)
+        
         response_retry = None
         if validation_result["status"] == "safe_fallback":
             retry_context = {**execution_context.to_json_dict(), "responseRetry": {"attempt": 1, "previousValidationStatus": validation_result["status"], "validationEvents": validation_result["validationEvents"]}}

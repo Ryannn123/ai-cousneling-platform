@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from .contracts import JsonObject, TurnInput
 from .safety import contains_official_truth, has_explicit_counseling_choice
+from .schemas import SemanticDeltaResult
 
 
-CONFIDENCE = {"low", "medium", "high"}
 BOUNDARY_TYPES = {
     "ready_to_apply_or_register",
     "official_action_request",
@@ -15,22 +15,20 @@ BOUNDARY_TYPES = {
     "human_requested_support",
     "ambiguous_proceed_language",
 }
-QUALITY_TYPES = {"concern_or_blocker", "constraint", "preference", "influence_or_context", "other"}
 
 
 class SemanticDeltaValidator:
     def validate(
         self,
-        raw_semantic_delta: JsonObject,
+        raw_semantic_delta: SemanticDeltaResult | JsonObject,
         turn_input: TurnInput | JsonObject,
         extractor: object | None = None,
         skill_context: JsonObject | None = None,
     ) -> JsonObject:
         rejected: list[JsonObject] = []
         downgraded: list[JsonObject] = []
-        events = [{"type": "schema_validated", "severity": "info", "message": "Semantic delta schema normalized."}]
-        accepted_memory = normalize_memory_deltas(raw_semantic_delta)
-        accepted_signals = normalize_runtime_signals(raw_semantic_delta)
+        events = [{"type": "schema_validated", "severity": "info", "message": "Semantic delta schema accepted."}]
+        accepted_memory, accepted_signals = schema_validated_delta(raw_semantic_delta)
 
         validate_flow(accepted_memory["flowDrivingDeltas"], rejected, downgraded, events)
         validate_quality(accepted_memory["qualityEnhancingDeltas"], rejected, events)
@@ -61,25 +59,10 @@ class SemanticDeltaValidator:
         }
 
 
-def normalize_memory_deltas(raw: JsonObject | None) -> JsonObject:
-    memory = raw.get("memoryDeltaCandidates", {}) if isinstance(raw, dict) else {}
-    flow = memory.get("flowDrivingDeltas", {}) if isinstance(memory, dict) else {}
-    return {
-        "flowDrivingDeltas": {
-            "academicResults": array(flow.get("academicResults")),
-            "coursesConsidering": array(flow.get("coursesConsidering")),
-            "confirmedCounselingCoursePreferences": object_or_none(flow.get("confirmedCounselingCoursePreferences")),
-            "universitiesConsidering": array(flow.get("universitiesConsidering")),
-            "confirmedCounselingUniversityPreferences": object_or_none(flow.get("confirmedCounselingUniversityPreferences")),
-            "pathwaysConsidering": array(flow.get("pathwaysConsidering")),
-            "confirmedCounselingPathwayPreferences": object_or_none(flow.get("confirmedCounselingPathwayPreferences")),
-        },
-        "qualityEnhancingDeltas": array(memory.get("qualityEnhancingDeltas") if isinstance(memory, dict) else None),
-    }
-
-
-def normalize_runtime_signals(raw: JsonObject | None) -> list[JsonObject]:
-    return array(raw.get("runtimeOnlySignalCandidates") if isinstance(raw, dict) else None)
+def schema_validated_delta(raw: SemanticDeltaResult | JsonObject) -> tuple[JsonObject, list[JsonObject]]:
+    parsed = raw if isinstance(raw, SemanticDeltaResult) else SemanticDeltaResult.model_validate(raw)
+    normalized = parsed.model_dump()
+    return normalized["memoryDeltaCandidates"], normalized["runtimeOnlySignalCandidates"]
 
 
 def validate_flow(flow: JsonObject, rejected: list[JsonObject], downgraded: list[JsonObject], events: list[JsonObject]) -> None:
@@ -96,9 +79,7 @@ def validate_quality(deltas: list[JsonObject], rejected: list[JsonObject], event
         if delta.get("usefulness") == "low":
             reject(rejected, events, path, delta, "quality_signal_low_usefulness", "quality_signal_ignored")
             del deltas[index]
-        elif not validate_candidate(path, delta, rejected, events) or delta.get("type") not in QUALITY_TYPES:
-            if delta.get("type") not in QUALITY_TYPES:
-                reject(rejected, events, path, delta, "quality_type_invalid")
+        elif not has_required_evidence(path, delta, rejected, events):
             del deltas[index]
 
 
@@ -106,7 +87,7 @@ def validate_signals(signals: list[JsonObject], rejected: list[JsonObject], even
     for index in range(len(signals) - 1, -1, -1):
         signal = signals[index]
         path = f"acceptedRuntimeOnlySignals.{index}"
-        if not validate_candidate(path, signal, rejected, events):
+        if not has_required_evidence(path, signal, rejected, events):
             del signals[index]
             continue
         if signal.get("kind") == "boundary" and signal.get("type") not in BOUNDARY_TYPES:
@@ -120,10 +101,7 @@ def validate_delta_list(path: str, deltas: list[JsonObject], rejected: list[Json
     for index in range(len(deltas) - 1, -1, -1):
         delta = deltas[index]
         candidate_path = f"{path}.{index}"
-        if not validate_candidate(candidate_path, delta, rejected, events):
-            del deltas[index]
-        elif delta.get("operation") != "add_new":
-            reject(rejected, events, candidate_path, delta, "delta_operation_not_supported")
+        if not has_required_evidence(candidate_path, delta, rejected, events):
             del deltas[index]
         elif contains_official_truth(delta):
             reject(rejected, events, candidate_path, delta, "official_action_not_memory_delta")
@@ -136,7 +114,7 @@ def validate_confirmed_preference(flow: JsonObject, label: str, list_key: str, r
     path = f"acceptedMemoryDeltas.flowDrivingDeltas.{confirmed_key}"
     if not delta:
         return
-    if not validate_candidate(path, delta, rejected, events) or not has_meaningful_value(delta):
+    if not has_required_evidence(path, delta, rejected, events) or not has_meaningful_value(delta):
         if not has_meaningful_value(delta):
             reject(rejected, events, path, delta, "delta_value_missing")
         flow[confirmed_key] = None
@@ -169,15 +147,9 @@ def preserve_human_help_posture(signals: list[JsonObject], events: list[JsonObje
         events.append({"type": "posture_boundary_signal_preserved", "severity": "warning", "message": "Human-help posture preserved as H6 boundary candidate."})
 
 
-def validate_candidate(path: str, candidate: JsonObject, rejected: list[JsonObject], events: list[JsonObject]) -> bool:
-    if not isinstance(candidate, dict):
-        reject(rejected, events, path, candidate, "candidate_not_object")
-        return False
+def has_required_evidence(path: str, candidate: JsonObject, rejected: list[JsonObject], events: list[JsonObject]) -> bool:
     if not any(isinstance(item, dict) and str(item.get("quote", "")).strip() for item in candidate.get("evidence", [])):
         reject(rejected, events, path, candidate, "missing_evidence")
-        return False
-    if candidate.get("confidence") not in CONFIDENCE:
-        reject(rejected, events, path, candidate, "confidence_invalid")
         return False
     events.append({"type": "evidence_validated", "severity": "info", "message": f"{path} has evidence."})
     return True
@@ -213,11 +185,3 @@ def reject(rejected: list[JsonObject], events: list[JsonObject], path: str, cand
 def has_meaningful_value(delta: JsonObject) -> bool:
     value = delta.get("value")
     return bool(value.strip()) if isinstance(value, str) else bool(isinstance(value, dict) and value)
-
-
-def array(value: object) -> list[JsonObject]:
-    return value if isinstance(value, list) else []
-
-
-def object_or_none(value: object) -> JsonObject | None:
-    return value if isinstance(value, dict) else None
