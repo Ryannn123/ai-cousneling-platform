@@ -21,10 +21,11 @@ SYSTEM_PROMPT = " ".join([
 ])
 
 SEMANTIC_PROMPT = (
-    "Extract SemanticDeltaResult. It is an untrusted proposal, not truth. "
+    "Extract SemanticDeltaResult. "
     "currentTruthBeforeTurn is read-only context for interpreting the new student message. "
     "Do not re-emit existing memory as a new delta unless the student restates, corrects, rejects, or changes it. "
     "Do not output platform metadata, CRM truth, or official application, registration, payment, enrollment, or seat truth."
+    "All the course or program, university, or pathway directions the student is considering, preferring, confirming, or rejecting MUST extract in flowDrivingDeltas and MUST NOT extract in qualityEnhancingDeltas"
 )
 
 
@@ -39,7 +40,7 @@ class AISemanticDeltaExtractor:
     async def extract(self, turn_input: TurnInput) -> SemanticDeltaResult:
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for semantic extraction")
-        agent = self.agent or Agent(self.settings.pydantic_ai_model, system_prompt=SEMANTIC_PROMPT, output_type=SemanticDeltaResult)
+        agent = self.agent or Agent(self.settings.pydantic_ai_model, instructions=SEMANTIC_PROMPT, output_type=SemanticDeltaResult)
         result = await agent.run(json.dumps(semantic_delta_input(turn_input), indent=2))
         return result.output if isinstance(result.output, SemanticDeltaResult) else SemanticDeltaResult.model_validate(result.output)
 

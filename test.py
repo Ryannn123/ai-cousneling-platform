@@ -23,7 +23,7 @@ async def run():
             previousRuntimeState = {},
             recentConversationSummary = '',
             currentTruthBeforeTurn = {},
-            studentMessage = 'i want to study business at taylor or UM',
+            studentMessage = 'i want to study business at taylor or UM, but i dont know which one is higher ranking. And i prefer uni with rich campus life',
         )
     extractor = AISemanticDeltaExtractor()
     validator = SemanticDeltaValidator()
@@ -34,26 +34,22 @@ async def run():
     #         flowDrivingDeltas=FlowDrivingDeltas(
     #             directions=[DirectionDelta(
     #                 confidence='high',
-    #                 dimension='course',
-    #                 evidence=[Evidence(quote='a')],
+    #                 dimension='university',
+    #                 evidence=[Evidence(quote='')],
     #                 operation='add_new',
     #                 status='considering',
     #                 value='a'
-    #             ), DirectionDelta(
-    #                 confidence='low',
-    #                 dimension='course',
-    #                 evidence=[Evidence(quote='a')],
-    #                 operation='add_new',
-    #                 status='confirmed_counseling_preference',
-    #                 value='a'
-    #             )]
+    #                 ),
+    #             ]
     #         )
     #     )
     # )
    
-    # delta_result = await extractor.extract(turn_input)
-    # validated_delta = validator.validate(delta_result, turn_input, extractor)
-    # commit_result = memory_service.commit_pre_response_student_memory(student_id, validated_delta)
+    delta_result = await extractor.extract(turn_input)
+    validated_delta = validator.validate(delta_result, turn_input, extractor)
+    pprint(validated_delta.to_json_dict())
+    print('='*30)
+    commit_result = memory_service.commit_pre_response_student_memory(student_id, validated_delta)
     truth = memory_service.derive_current_truth(student_id)
     pprint(truth.to_json_dict())
     
