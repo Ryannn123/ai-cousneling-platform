@@ -10,7 +10,7 @@ from .memory_store import MemoryEventStore
 from .memory_validation import MemoryEventDraft, MemoryEventSource, MemoryEventValidator
 from .safety import contains_official_truth
 from .schemas import AIExecutionResult, Confidence
-from .semantic_delta import AcceptedSemanticDelta, AcceptedSemanticDeltaInput, AcceptedStudentMemoryCandidate, MemoryCategory, platform_metadata
+from .semantic_delta import AcceptedSemanticDelta, AcceptedStudentMemoryCandidate, MemoryCategory, platform_metadata
 
 
 HANDOFF_OUTPUTS = {"readiness_to_register_signal", "handoff_required"}
@@ -260,9 +260,9 @@ def event_draft_for(decision: MemoryWriteDecision, student_id: str, accepted_sem
     )
 
 
-def accepted_semantic_delta_id_of(accepted_semantic_delta: AcceptedSemanticDeltaInput) -> str:
-    meta = platform_metadata(accepted_semantic_delta)
-    return f"{meta.get('conversationId', 'unknown')}:{meta.get('turnId', 'unknown')}:{meta.get('messageId', 'unknown')}"
+def accepted_semantic_delta_id_of(accepted_semantic_delta: AcceptedSemanticDelta) -> str:
+    meta = accepted_semantic_delta.platform_metadata
+    return f"{meta.conversationId or 'unknown'}:{meta.turnId or 'unknown'}:{meta.messageId or 'unknown'}"
 
 
 def idempotency_key_for(draft: MemoryEventDraft) -> str:

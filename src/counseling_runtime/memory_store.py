@@ -28,17 +28,17 @@ class MemoryEventStore:
         append_ndjson(self.memory_events_path, {"idempotencyKey": idempotency_key, "event": event_json})
         return MemoryAppendResult(status='appended', eventId=event.event_id, reason=[])
 
-    def get_events_for_projection(self, student_id: str | None = None, categories: list[str] | None = None) -> list[JsonObject]:
+    def get_events_for_projection(self, student_id: str | None = None, categories: list[str] | None = None) -> list[DurableMemoryEvent]:
         category_set = set(categories or [])
         events = [
             event for event in self.read_events()
-            if (not student_id or event.get("studentId") == student_id)
-            and (not category_set or event.get("category") in category_set)
+            if (not student_id or event.draft.student_id == student_id)
+            and (not category_set or event.draft.category in category_set)
         ]
-        return sorted(events, key=lambda event: (str(event.get("createdAt")), str(event.get("eventId"))))
+        return sorted(events, key=lambda event: (str(event.created_at), str(event.event_id)))
 
-    def read_events(self) -> list[JsonObject]:
-        return [record.get("event", record) for record in self.read_records()]
+    def read_events(self) -> list[DurableMemoryEvent]:
+        return [DurableMemoryEvent.from_json_dict(record.get("event", record)) for record in self.read_records()]
 
     def read_records(self) -> list[JsonObject]:
         return read_ndjson(self.memory_events_path)

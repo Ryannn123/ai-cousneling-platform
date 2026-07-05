@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from .contracts import JsonObject
+from .memory_validation import DurableMemoryEvent
 
 
 class CurrentTruthProjector:
-    def project(self, student_id: str | None = None, events: list[JsonObject] | None = None) -> JsonObject:
-        sorted_events = sorted(events or [], key=lambda event: (str(event.get("createdAt")), str(event.get("eventId"))))
+    def project(self, student_id: str, events: list[DurableMemoryEvent]) -> JsonObject:
+        sorted_events = [event.to_json_dict() for event in events]
         projection = empty_projection(student_id, sorted_events)
         for event in sorted_events:
             if event.get("operation") != "add_new" or event.get("officialTruthBoundary", {}).get("isOfficialTruth"):
@@ -71,7 +72,7 @@ def quality_item(event: JsonObject) -> JsonObject:
 def upsert_direction(target: list[JsonObject], event: JsonObject) -> None:
     payload = event.get("payload", {})
     existing = next((item for item in target if same_text(item.get("value"), payload.get("value"))), None)
-    next_item = {"value": payload.get("value"), "status": payload.get("status", "considering"), "confidence": event.get("confidence"), "supportingEventIds": [*(existing or {}).get("supportingEventIds", []), event.get("eventId")]}
+    next_item = {"value": payload.get("value"), 'universityType': payload.get('universityType'), "status": payload.get("status", "considering"), "confidence": event.get("confidence"), "supportingEventIds": [*(existing or {}).get("supportingEventIds", []), event.get("eventId")]}
     if existing:
         existing.update(stronger_direction(existing, next_item))
     else:

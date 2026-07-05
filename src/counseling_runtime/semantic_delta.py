@@ -202,8 +202,8 @@ def direction_memory_candidate(accepted_delta_id: str, delta: DirectionDelta) ->
     if delta.status == "rejected":
         return student_memory_candidate(accepted_delta_id, delta, "rejected_option", {"optionType": delta.dimension, "value": delta.value, "status": "rejected"})
     if delta.status == "confirmed_counseling_preference":
-        return student_memory_candidate(accepted_delta_id, delta, "counseling_preference", {"dimension": delta.dimension, "value": delta.value, "status": delta.status})
-    return student_memory_candidate(accepted_delta_id, delta, direction_category(delta), {"value": delta.value, "status": delta.status})
+        return student_memory_candidate(accepted_delta_id, delta, "counseling_preference", {"dimension": delta.dimension, "value": delta.value, "status": delta.status, 'universityType': delta.universityType})
+    return student_memory_candidate(accepted_delta_id, delta, direction_category(delta), {"value": delta.value, "status": delta.status, 'universityType': delta.universityType})
 
 
 def quality_memory_candidate(accepted_delta_id: str, delta: QualityEnhancingDelta) -> AcceptedStudentMemoryCandidate:

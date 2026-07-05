@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 from uuid import uuid4
 
 from .contracts import JsonObject, SkillSelection
@@ -16,6 +16,21 @@ MemoryEventCategory = MemoryCategory | AIOutputMemoryCategory
 MemoryOperation = Literal["add_new"]
 MemoryValidationStatus = Literal["valid", "reject"]
 ROUTE_OUTCOMES = {"confirmed_preference", "accepted_fallback", "deferred_decision", "student_switched_route", "blocked_by_boundary", "handoff_required"}
+MEMORY_EVENT_CATEGORIES = {
+    "academic",
+    "course_direction",
+    "university_direction",
+    "pathway_direction",
+    "counseling_preference",
+    "rejected_option",
+    "constraint",
+    "quality_context",
+    "concern",
+    "recommendation_interaction",
+    "handoff_readiness",
+    "route_outcome",
+}
+CONFIDENCE_VALUES = {"low", "medium", "high"}
 
 
 @dataclass(slots=True, frozen=True)
@@ -59,8 +74,6 @@ class MemoryEventDraft:
             "confidence": self.confidence,
             "evidence": self.evidence,
             "source": self.source.to_json_dict(),
-            "merge": {"projectionIntent": self.projection_intent},
-            "officialTruthBoundary": {"isOfficialTruth": False},
         }
 
 
@@ -72,23 +85,50 @@ class DurableMemoryEvent:
     created_at: str
 
     def to_json_dict(self) -> JsonObject:
-        draft = self.draft.to_json_dict()
         return {
             "eventId": self.event_id,
-            "studentId": draft["studentId"],
+            "studentId": self.draft.student_id,
             "conversationId": self.draft.source.conversation_id,
             "turnId": self.draft.source.turn_id,
             "messageId": self.draft.source.message_id,
-            "category": draft["category"],
-            "operation": draft["operation"],
-            "payload": draft["payload"],
-            "confidence": draft["confidence"],
-            "evidence": draft["evidence"],
+            "category": self.draft.category,
+            "operation": self.draft.operation,
+            "payload": self.draft.payload,
+            "confidence": self.draft.confidence,
+            "evidence": self.draft.evidence,
             "source": self.source,
-            "merge": draft["merge"],
+            "merge": {"projectionIntent": self.draft.projection_intent},
             "officialTruthBoundary": {"isOfficialTruth": False},
+            "validation": {"validated": True, "validatorVersion": "memory-event-validator.phase5.v1"},
             "createdAt": self.created_at,
         }
+
+    @classmethod
+    def from_json_dict(cls, event: JsonObject) -> DurableMemoryEvent:
+        source = event.get("source", {})
+        merge = event.get("merge", {})
+        draft = MemoryEventDraft(
+            student_id=str(event.get("studentId") or ""),
+            category=memory_event_category(event.get("category")),
+            operation=memory_operation(event.get("operation")),
+            payload=event.get("payload", {}) if isinstance(event.get("payload"), dict) else {},
+            confidence=confidence(event.get("confidence")),
+            evidence=evidence_list(event.get("evidence")),
+            source=MemoryEventSource(
+                accepted_semantic_delta_id=str(source.get("acceptedSemanticDeltaId") or ""),
+                accepted_delta_id=str(source.get("acceptedDeltaId") or ""),
+                conversation_id=optional_str(event.get("conversationId")),
+                turn_id=optional_str(event.get("turnId")),
+                message_id=optional_str(event.get("messageId")),
+            ),
+            projection_intent=str(merge.get("projectionIntent") or "may_update_current_truth"),
+        )
+        return cls(
+            event_id=str(event.get("eventId") or ""),
+            draft=draft,
+            source=source if isinstance(source, dict) else {},
+            created_at=str(event.get("createdAt") or ""),
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -166,6 +206,40 @@ def to_durable_event(draft: MemoryEventDraft, selected_skill_context: SkillSelec
         "skillName": selected.get("name"),
         "skillVersion": selected.get("version"),
         "skillHash": selected.get("contentHash"),
-        "validatorVersion": "memory-event-validator.phase5.v1",
     }
     return DurableMemoryEvent(str(uuid4()), draft, source, datetime.now(UTC).isoformat())
+
+
+def memory_event_category(value: object) -> MemoryEventCategory:
+    if value not in MEMORY_EVENT_CATEGORIES:
+        raise ValueError(f"invalid memory event category: {value}")
+    return cast(MemoryEventCategory, value)
+
+
+def memory_operation(value: object) -> MemoryOperation:
+    if value != "add_new":
+        raise ValueError(f"invalid memory operation: {value}")
+    return "add_new"
+
+
+def confidence(value: object) -> Confidence:
+    if value not in CONFIDENCE_VALUES:
+        raise ValueError(f"invalid confidence: {value}")
+    return cast(Confidence, value)
+
+
+def evidence_list(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    evidence: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, dict):
+            quote = item.get("quote")
+            if isinstance(quote, str):
+                source = item.get("source")
+                evidence.append({"quote": quote, **({"source": source} if isinstance(source, str) else {})})
+    return evidence
+
+
+def optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None

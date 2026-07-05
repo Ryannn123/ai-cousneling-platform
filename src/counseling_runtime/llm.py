@@ -36,7 +36,7 @@ class AISemanticDeltaExtractor:
         self.model = self.settings.model_name
         self.agent = agent
 
-    async def extract(self, turn_input: TurnInput | JsonObject) -> SemanticDeltaResult:
+    async def extract(self, turn_input: TurnInput) -> SemanticDeltaResult:
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for semantic extraction")
         agent = self.agent or Agent(self.settings.pydantic_ai_model, system_prompt=SEMANTIC_PROMPT, output_type=SemanticDeltaResult)
@@ -60,7 +60,7 @@ class AIExecutionClient:
         return result.output if isinstance(result.output, AIExecutionResult) else AIExecutionResult.model_validate(result.output)
 
 
-def semantic_delta_input(turn_input: TurnInput | JsonObject) -> JsonObject:
+def semantic_delta_input(turn_input: TurnInput) -> JsonObject:
     return {key: value for key, value in turn_input.items() if key not in {"conversationId", "turnId", "messageId", "previousRuntimeState"}}
 
 
