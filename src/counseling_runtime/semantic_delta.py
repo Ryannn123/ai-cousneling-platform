@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from .contracts import JsonObject, TurnInput
+from .memory_payloads import AcademicPayload, CounselingPreferencePayload, DirectionPayload, MemoryEventPayload, QualitySignalPayload, RejectedOptionPayload
 from .schemas import AcademicResultDelta, BaseDelta, Confidence, DirectionDelta, FlowDrivingDeltas, MemoryDeltaCandidates, QualityEnhancingDelta, RuntimeOnlySignal, SemanticDeltaResult, dump
 
 
@@ -66,7 +67,7 @@ class AcceptedStudentMemoryCandidate:
     accepted_delta_id: str
     category: MemoryCategory
     operation: MemoryOperation
-    payload: JsonObject
+    payload: MemoryEventPayload
     confidence: Confidence
     evidence: list[dict[str, str]]
     projection_intent: str
@@ -76,7 +77,7 @@ class AcceptedStudentMemoryCandidate:
             "acceptedDeltaId": self.accepted_delta_id,
             "category": self.category,
             "operation": self.operation,
-            "payload": self.payload,
+            "payload": self.payload.to_json_dict(),
             "confidence": self.confidence,
             "evidence": self.evidence,
             "projectionIntent": self.projection_intent,
@@ -195,29 +196,34 @@ def student_memory_candidates(memory: MemoryDeltaCandidates) -> list[AcceptedStu
 
 
 def academic_memory_candidate(accepted_delta_id: str, delta: AcademicResultDelta) -> AcceptedStudentMemoryCandidate:
-    return student_memory_candidate(accepted_delta_id, delta, "academic", {"rawText": delta.value, "status": "known"})
+    return student_memory_candidate(accepted_delta_id, delta, "academic", AcademicPayload(raw_text=delta.value))
 
 
 def direction_memory_candidate(accepted_delta_id: str, delta: DirectionDelta) -> AcceptedStudentMemoryCandidate:
     if delta.status == "rejected":
-        return student_memory_candidate(accepted_delta_id, delta, "rejected_option", {"optionType": delta.dimension, "value": delta.value, "status": "rejected"})
+        return student_memory_candidate(accepted_delta_id, delta, "rejected_option", RejectedOptionPayload(option_type=delta.dimension, value=delta.value))
     if delta.status == "confirmed_counseling_preference":
-        return student_memory_candidate(accepted_delta_id, delta, "counseling_preference", {"dimension": delta.dimension, "value": delta.value, "status": delta.status, 'universityType': delta.universityType})
-    return student_memory_candidate(accepted_delta_id, delta, direction_category(delta), {"value": delta.value, "status": delta.status, 'universityType': delta.universityType})
+        return student_memory_candidate(accepted_delta_id, delta, "counseling_preference", CounselingPreferencePayload(dimension=delta.dimension, value=delta.value, status=delta.status, university_type=delta.universityType))
+    return student_memory_candidate(accepted_delta_id, delta, direction_category(delta), DirectionPayload(value=delta.value, status=delta.status, university_type=delta.universityType))
 
 
 def quality_memory_candidate(accepted_delta_id: str, delta: QualityEnhancingDelta) -> AcceptedStudentMemoryCandidate:
     category = "constraint" if delta.type == "constraint" else "concern" if delta.type == "concern" else "quality_context"
-    return student_memory_candidate(accepted_delta_id, delta, category, {
-        "type": delta.type,
-        "value": delta.value,
-        "usefulness": delta.usefulness,
-        "sensitivity": delta.sensitivity,
-        "constraintStrength": delta.constraintStrength or ("hard_constraint" if category == "constraint" else "soft_preference"),
-    })
+    return student_memory_candidate(
+        accepted_delta_id,
+        delta,
+        category,
+        QualitySignalPayload(
+            type=delta.type,
+            value=delta.value,
+            usefulness=delta.usefulness,
+            sensitivity=delta.sensitivity,
+            constraint_strength=delta.constraintStrength or ("hard_constraint" if category == "constraint" else "soft_preference"),
+        ),
+    )
 
 
-def student_memory_candidate(accepted_delta_id: str, delta: BaseDelta, category: MemoryCategory, payload: JsonObject) -> AcceptedStudentMemoryCandidate:
+def student_memory_candidate(accepted_delta_id: str, delta: BaseDelta, category: MemoryCategory, payload: MemoryEventPayload) -> AcceptedStudentMemoryCandidate:
     return AcceptedStudentMemoryCandidate(
         accepted_delta_id=accepted_delta_id,
         category=category,

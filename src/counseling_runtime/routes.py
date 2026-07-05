@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, RouteCandidate
+from .current_truth_schema import CurrentTruthProjection
 from .semantic_delta import AcceptedSemanticDeltaInput, accepted_memory_deltas, accepted_runtime_only_signals
 
 class RouteEpisodeCandidateResolver:
-    def resolve(self, current_truth_projection: JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> RouteCandidate:
+    def resolve(self, current_truth_projection: CurrentTruthProjection, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> RouteCandidate:
         route_signal = next((signal for signal in route_signals(accepted_semantic_delta) if signal.get("routeHint") and signal.get("confidence") in {"medium", "high"}), None)
         route_hint = route_signal.get("routeHint") if route_signal else None
         route_type = route_hint if isinstance(route_hint, str) else derive_route_type(current_truth_projection, student_message)
@@ -17,7 +18,7 @@ class RouteEpisodeCandidateResolver:
                 "usedAcceptedSemanticDelta": bool(route_signal),
                 "usedPriorOperatingContext": bool((previous_operating_context or {}).get("activeRouteEpisode")),
                 "usedBoundaryResult": False,
-                "usedRouteOutcomeHistory": bool(current_truth_projection.get("routeEpisodeProjection", {}).get("routeOutcomeHistory")),
+                "usedRouteOutcomeHistory": bool(current_truth_projection.route_history.outcomes),
             },
             "auditReason": f"Route candidate came from route signal {route_signal.get('signalType')}." if route_signal else f"Route candidate derived from current truth as {route_type}.",
         })
@@ -27,7 +28,7 @@ class RouteEpisodePlanner:
     def __init__(self, transition_validator: "RouteTransitionValidator | None" = None) -> None:
         self.transition_validator = transition_validator or RouteTransitionValidator()
 
-    def plan(self, boundary_result: BoundaryResult | JsonObject, route_candidate: RouteCandidate, current_truth_projection: JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> ActiveRouteEpisode:
+    def plan(self, boundary_result: BoundaryResult | JsonObject, route_candidate: RouteCandidate, current_truth_projection: CurrentTruthProjection, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> ActiveRouteEpisode:
         prior = (previous_operating_context or {}).get("activeRouteEpisode")
         runtime_signals = accepted_runtime_only_signals(accepted_semantic_delta)
         signals = [signal for signal in runtime_signals if signal.get("kind") == "route_episode"]
@@ -113,11 +114,11 @@ class RouteEpisodePlanner:
             "routeGoal": route_goal(active_route),
             "progressState": progress_state,
             "transitionDecision": transition_decision,
-            "recommendationReadiness": current_truth_projection["recommendationReadiness"]["level"],
-            "preferenceStrength": current_truth_projection["preference"]["preferenceStrength"],
+            "recommendationReadiness": current_truth_projection.readiness.recommendation_level,
+            "preferenceStrength": current_truth_projection.preference.strength,
             "activeDirections": active_directions(current_truth_projection),
-            "routeConstraints": [*current_truth_projection["qualityContext"]["hardConstraints"], *current_truth_projection["qualityContext"]["softPreferences"]],
-            "decisionBlockers": current_truth_projection["decisionContext"]["currentDecisionBlockers"],
+            "routeConstraints": [item.to_json_dict() for item in [*current_truth_projection.quality_context.hard_constraints, *current_truth_projection.quality_context.soft_preferences]],
+            "decisionBlockers": [item.to_json_dict() for item in current_truth_projection.decision_blockers],
             **({"routeOutcomeCandidate": route_outcome_candidate} if route_outcome_candidate else {}),
             **({"nextRouteCandidate": next_route_candidate} if next_route_candidate else {}),
             **({"resumeRouteCandidate": resume_route_candidate} if resume_route_candidate else {}),
@@ -182,11 +183,11 @@ class RouteOutcomeValidator:
         }
 
 
-def derive_route_type(current_truth: JsonObject, text: str = "") -> str:
-    has_academic = current_truth["academic"]["academicResultStatus"] == "known"
-    course_known = is_known_direction(current_truth["direction"]["courseDirectionStatus"])
-    university_known = is_known_direction(current_truth["direction"]["universityDirectionStatus"])
-    pathway_known = is_known_direction(current_truth["direction"]["pathwayDirectionStatus"])
+def derive_route_type(current_truth: CurrentTruthProjection, text: str = "") -> str:
+    has_academic = current_truth.academic.status == "known"
+    course_known = is_known_direction(current_truth.course.status)
+    university_known = is_known_direction(current_truth.university.status)
+    pathway_known = is_known_direction(current_truth.pathway.status)
     if not has_academic:
         return "initial_route_selection"
     if pathway_known and not (course_known and university_known):
@@ -220,16 +221,16 @@ def evidence_from_signal(signal: JsonObject | None) -> list[JsonObject]:
     return (signal or {}).get("evidence", [])
 
 
-def candidate_evidence(current_truth: JsonObject, student_message: str) -> list[JsonObject]:
+def candidate_evidence(current_truth: CurrentTruthProjection, student_message: str) -> list[JsonObject]:
     return [{"quote": student_message or "current truth projection", "source": "current_truth_projection", "basis": {
-        "academicResultStatus": current_truth["academic"]["academicResultStatus"],
-        "courseDirectionStatus": current_truth["direction"]["courseDirectionStatus"],
-        "universityDirectionStatus": current_truth["direction"]["universityDirectionStatus"],
-        "pathwayDirectionStatus": current_truth["direction"]["pathwayDirectionStatus"],
+        "academicResultStatus": current_truth.academic.status,
+        "courseDirectionStatus": current_truth.course.status,
+        "universityDirectionStatus": current_truth.university.status,
+        "pathwayDirectionStatus": current_truth.pathway.status,
     }}]
 
 
-def should_continue_prior_route(prior: JsonObject, route_candidate: RouteCandidate, route_signals_: list[JsonObject], boundary_result: BoundaryResult | JsonObject, current_truth_projection: JsonObject, student_message: str) -> bool:
+def should_continue_prior_route(prior: JsonObject, route_candidate: RouteCandidate, route_signals_: list[JsonObject], boundary_result: BoundaryResult | JsonObject, current_truth_projection: CurrentTruthProjection, student_message: str) -> bool:
     if not prior.get("routeType") or prior.get("routeType") == "initial_route_selection" or prior.get("progressState") == "completed":
         return False
     if boundary_result.get("allowedNextBehavior") == "handoff":
@@ -243,7 +244,7 @@ def should_continue_prior_route(prior: JsonObject, route_candidate: RouteCandida
     return True
 
 
-def progress_state_for_route(route_candidate: RouteCandidate | JsonObject, current_truth_projection: JsonObject, runtime_signals: list[JsonObject]) -> str:
+def progress_state_for_route(route_candidate: RouteCandidate | JsonObject, current_truth_projection: CurrentTruthProjection, runtime_signals: list[JsonObject]) -> str:
     if route_candidate["routeType"] == "initial_route_selection":
         return "opening"
     if has_student_posture(runtime_signals, "comparison_oriented"):
@@ -252,7 +253,7 @@ def progress_state_for_route(route_candidate: RouteCandidate | JsonObject, curre
         return "deferral_indecision"
     if has_confirmed_preference_for_route(current_truth_projection, route_candidate["routeType"]):
         return "confirmed_preference"
-    if current_truth_projection["recommendationReadiness"]["level"] in {"R2", "R3"} and route_candidate["routeType"] in {"university_exploration", "combined_option_validation"}:
+    if current_truth_projection.readiness.recommendation_level in {"R2", "R3"} and route_candidate["routeType"] in {"university_exploration", "combined_option_validation"}:
         return "recommendation_ready"
     return "exploration"
 
@@ -261,37 +262,41 @@ def has_knowledge_detour(runtime_signals: list[JsonObject]) -> bool:
     return any(signal.get("kind") == "knowledge_need" for signal in runtime_signals)
 
 
-def has_confirmed_preference_for_route(current_truth: JsonObject, route_type: str) -> bool:
-    if current_truth["preference"]["preferenceStrength"] != "L4":
+def has_confirmed_preference_for_route(current_truth: CurrentTruthProjection, route_type: str) -> bool:
+    if current_truth.preference.strength != "L4":
         return False
-    if current_truth["routeEpisodeProjection"]["latestRouteOutcomeByRoute"].get(route_type, {}).get("outcome") == "confirmed_preference":
+    route_outcome = current_truth.route_history.latest_outcome_by_route.get(route_type)
+    if route_outcome and route_outcome.outcome == "confirmed_preference":
         return False
-    preference = current_truth["preference"].get("confirmedCounselingPreference", {})
+    preference = current_truth.preference.confirmed
+    if not preference:
+        return False
     return bool(
-        (route_type == "course_exploration" and preference.get("courseOrProgram"))
-        or (route_type == "university_exploration" and preference.get("university"))
-        or (route_type == "pathway_exploration" and preference.get("pathway"))
-        or (route_type == "course_exploration_within_university_context" and preference.get("courseOrProgram"))
-        or (route_type == "combined_option_validation" and preference.get("courseOrProgram") and preference.get("university"))
+        (route_type == "course_exploration" and preference.course_or_program)
+        or (route_type == "university_exploration" and preference.university)
+        or (route_type == "pathway_exploration" and preference.pathway)
+        or (route_type == "course_exploration_within_university_context" and preference.course_or_program)
+        or (route_type == "combined_option_validation" and preference.course_or_program and preference.university)
     )
 
 
-def active_directions(current_truth: JsonObject) -> JsonObject:
-    course = best_direction(current_truth["direction"]["activeCourseDirections"])
-    university = best_direction(current_truth["direction"]["activeUniversityDirections"])
-    pathway = best_direction(current_truth["direction"]["activePathwayDirections"])
-    return {**({"course": course["value"]} if course else {}), **({"university": university["value"]} if university else {}), **({"pathway": pathway["value"]} if pathway else {})}
+def active_directions(current_truth: CurrentTruthProjection) -> JsonObject:
+    return {
+        **({"course": current_truth.active_direction.course} if current_truth.active_direction.course else {}),
+        **({"university": current_truth.active_direction.university} if current_truth.active_direction.university else {}),
+        **({"pathway": current_truth.active_direction.pathway} if current_truth.active_direction.pathway else {}),
+    }
 
 
-def route_is_resolved(current_truth: JsonObject, route_type: str, student_message: str) -> bool:
-    if current_truth["routeEpisodeProjection"]["latestRouteOutcomeByRoute"].get(route_type):
+def route_is_resolved(current_truth: CurrentTruthProjection, route_type: str, student_message: str) -> bool:
+    if current_truth.route_history.latest_outcome_by_route.get(route_type):
         return True
     if route_type == "course_exploration":
-        return current_truth["direction"]["courseDirectionStatus"] == "confirmed_counseling_course_preference"
+        return current_truth.course.status == "confirmed_counseling_course_preference"
     if route_type == "university_exploration":
-        return current_truth["direction"]["universityDirectionStatus"] == "confirmed_counseling_university_preference"
+        return current_truth.university.status == "confirmed_counseling_university_preference"
     if route_type == "pathway_exploration":
-        return current_truth["direction"]["pathwayDirectionStatus"] == "confirmed_counseling_pathway_preference"
+        return current_truth.pathway.status == "confirmed_counseling_pathway_preference"
     return False
 
 
@@ -306,14 +311,6 @@ def has_evidence(decision: JsonObject) -> bool:
 
 def is_known_direction(status: str | None) -> bool:
     return bool(status and status != "unknown")
-
-
-def best_direction(directions: list[JsonObject]) -> JsonObject | None:
-    return sorted(directions, key=lambda item: direction_rank(str(item.get("status") or "")), reverse=True)[0] if directions else None
-
-
-def direction_rank(status: str | None) -> int:
-    return {"confirmed_counseling_preference": 3, "preferred": 2, "considering": 1}.get(status or "", 0)
 
 
 def boundary_evidence(boundary_result: BoundaryResult | JsonObject, student_message: str) -> list[JsonObject]:

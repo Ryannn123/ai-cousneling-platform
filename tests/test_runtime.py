@@ -10,7 +10,8 @@ from pydantic import ValidationError
 from counseling_runtime.api.app import app
 from counseling_runtime.knowledge import KnowledgeGateway
 from counseling_runtime.llm import AIExecutionClient, build_response_prompt
-from counseling_runtime.memory import AuditEventStore, MemoryEventStore, MemoryStateService
+from counseling_runtime.memory import MemoryStateService
+from counseling_runtime.memory_store import MemoryEventStore
 from counseling_runtime.orchestrator import CounselingTurnOrchestrator
 from counseling_runtime.schemas import AIExecutionResult, AIResponse, ProposedOutputs, SemanticDeltaResult, ValidationFlags
 from counseling_runtime.semantic_delta import SemanticDeltaValidator
@@ -38,8 +39,7 @@ class MockExecutionClient:
 
 def make_app(tmp_path, **services):
     memory_store = MemoryEventStore(tmp_path / "memory-events.ndjson")
-    audit_store = AuditEventStore(tmp_path / "audit.ndjson")
-    memory_service = MemoryStateService(memory_event_store=memory_store, audit_event_store=audit_store)
+    memory_service = MemoryStateService(memory_event_store=memory_store)
     defaults = {
         "ai_semantic_delta_extractor": MockSemanticDeltaExtractor(),
         "ai_execution_client": MockExecutionClient(),

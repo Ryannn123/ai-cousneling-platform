@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from .contracts import BoundaryResult, JsonObject, SkillSelection, ValidationResult
 from .current_truth import CurrentTruthProjector
+from .current_truth_schema import CurrentTruthProjection
+from .memory_payloads import HandoffReadinessPayload, MemoryEventPayload, RecommendationInteractionPayload, RouteOutcomePayload, optional_str, route_outcome
 from .memory_store import MemoryEventStore
 from .memory_validation import MemoryEventDraft, MemoryEventSource, MemoryEventValidator
 from .safety import contains_official_truth
@@ -46,7 +48,7 @@ class MemoryWriteDecision:
     commit_class: MemoryCommitClass
     category: MemoryEventCategory | None
     operation: MemoryOperation
-    payload: JsonObject
+    payload: MemoryEventPayload | None
     confidence: Confidence
     evidence: list[dict[str, str]]
     projection_intent: str
@@ -65,7 +67,7 @@ class MemoryWriteDecision:
             "category": self.category,
             "operation": self.operation,
             "projectionIntent": self.projection_intent,
-            "payload": self.payload,
+            "payload": self.payload.to_json_dict() if self.payload else {},
             "confidence": self.confidence,
             "evidence": self.evidence,
             "reasons": self.reasons,
@@ -85,7 +87,7 @@ class MemoryStateService:
         self.memory_event_validator = memory_event_validator or MemoryEventValidator()
         self.current_truth_projector = current_truth_projector or CurrentTruthProjector()
 
-    def derive_current_truth(self, student_id: str) -> JsonObject:
+    def derive_current_truth(self, student_id: str) -> CurrentTruthProjection:
         return self.current_truth_projector.project(student_id, self.memory_event_store.get_events_for_projection(student_id))
 
     def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta) -> MemoryCommitResult:
@@ -208,7 +210,7 @@ def ai_output_decision(accepted_delta_id: str, output: JsonObject, selected_skil
             commit_class="audit_only",
             category=None,
             operation="add_new",
-            payload={},
+            payload=None,
             confidence=output.get("confidence", "medium"),
             evidence=evidence_from_output(output),
             projection_intent="audit_only",
@@ -219,8 +221,8 @@ def ai_output_decision(accepted_delta_id: str, output: JsonObject, selected_skil
     return memory_write_decision(accepted_delta_id, delta, category, "post_response_ai_produced_output", payload_for_output(output, selected_skill_context), "may_update_current_truth")
 
 
-def memory_write_decision(accepted_delta_id: str, delta: JsonObject, category: MemoryEventCategory, commit_class: MemoryCommitClass, payload: JsonObject, projection_intent: str) -> MemoryWriteDecision:
-    official_safe = not contains_official_truth({"delta": delta, "payload": payload})
+def memory_write_decision(accepted_delta_id: str, delta: JsonObject, category: MemoryEventCategory, commit_class: MemoryCommitClass, payload: MemoryEventPayload, projection_intent: str) -> MemoryWriteDecision:
+    official_safe = not contains_official_truth({"delta": delta, "payload": payload.to_json_dict()})
     operation_supported = delta.get("operation") == "add_new"
     can_commit = official_safe and operation_supported
     return MemoryWriteDecision(
@@ -240,7 +242,7 @@ def memory_write_decision(accepted_delta_id: str, delta: JsonObject, category: M
 
 def event_draft_for(decision: MemoryWriteDecision, student_id: str, accepted_semantic_delta: AcceptedSemanticDelta) -> MemoryEventDraft:
     meta = accepted_semantic_delta.platform_metadata
-    if decision.category is None:
+    if decision.category is None or decision.payload is None:
         raise ValueError("memory event draft requires a category")
     return MemoryEventDraft(
         student_id=student_id,
@@ -291,13 +293,38 @@ def category_for_ai_output(output: JsonObject) -> AIOutputMemoryCategory | None:
     return "route_outcome" if output.get("type") == "route_outcome" else "handoff_readiness" if output.get("type") in HANDOFF_OUTPUTS else "recommendation_interaction" if output.get("type") == "recommendation_shown" else None
 
 
-def payload_for_output(output: JsonObject, selected_skill_context: JsonObject) -> JsonObject:
+def payload_for_output(output: JsonObject, selected_skill_context: JsonObject) -> MemoryEventPayload:
     selected = selected_skill_context.get("selectedRuntimeSkill", {})
     if output.get("type") == "route_outcome":
         value = output.get("value", {})
         value = value if isinstance(value, dict) else {}
-        return {"type": output.get("type"), **value, "outcome": value.get("outcome"), "status": value.get("outcome"), "skillName": selected.get("name")}
-    return {"type": output.get("type"), "value": output.get("value") or output, "status": output.get("type"), "skillName": selected.get("name")}
+        outcome = route_outcome(value.get("outcome"))
+        return RouteOutcomePayload(
+            type="route_outcome",
+            outcome=outcome,
+            status=outcome,
+            route_type=optional_str(value.get("routeType")),
+            progress_state=optional_str(value.get("progressState")),
+            previous_route=optional_str(value.get("previousRoute")),
+            next_route_candidate=optional_str(value.get("nextRouteCandidate")),
+            resume_route_candidate=optional_str(value.get("resumeRouteCandidate")),
+            reason=optional_str(value.get("reason")),
+            skill_name=optional_str(selected.get("name")),
+        )
+    if output.get("type") in HANDOFF_OUTPUTS:
+        value = output.get("value")
+        return HandoffReadinessPayload(
+            type=str(output.get("type") or "handoff_required"),
+            value=value if isinstance(value, dict) else {},
+            status=str(output.get("type") or "handoff_required"),
+            skill_name=optional_str(selected.get("name")),
+        )
+    return RecommendationInteractionPayload(
+        type=str(output.get("type") or "recommendation_shown"),
+        value=output.get("value") or output,
+        status=str(output.get("type") or "recommendation_shown"),
+        skill_name=optional_str(selected.get("name")),
+    )
 
 
 def empty_commit_result() -> MemoryCommitResult:

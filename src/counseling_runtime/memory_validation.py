@@ -6,6 +6,19 @@ from typing import Literal, cast
 from uuid import uuid4
 
 from .contracts import JsonObject, SkillSelection
+from .memory_payloads import (
+    AcademicPayload,
+    CounselingPreferencePayload,
+    DirectionPayload,
+    HandoffReadinessPayload,
+    MemoryEventCategory as PayloadMemoryEventCategory,
+    MemoryEventPayload,
+    QualitySignalPayload,
+    RecommendationInteractionPayload,
+    RejectedOptionPayload,
+    RouteOutcomePayload,
+    parse_memory_payload,
+)
 from .safety import contains_official_truth
 from .schemas import Confidence
 from .semantic_delta import MemoryCategory
@@ -15,7 +28,6 @@ AIOutputMemoryCategory = Literal["recommendation_interaction", "handoff_readines
 MemoryEventCategory = MemoryCategory | AIOutputMemoryCategory
 MemoryOperation = Literal["add_new"]
 MemoryValidationStatus = Literal["valid", "reject"]
-ROUTE_OUTCOMES = {"confirmed_preference", "accepted_fallback", "deferred_decision", "student_switched_route", "blocked_by_boundary", "handoff_required"}
 MEMORY_EVENT_CATEGORIES = {
     "academic",
     "course_direction",
@@ -59,7 +71,7 @@ class MemoryEventDraft:
     student_id: str
     category: MemoryEventCategory
     operation: MemoryOperation
-    payload: JsonObject
+    payload: MemoryEventPayload
     confidence: Confidence
     evidence: list[dict[str, str]]
     source: MemoryEventSource
@@ -70,7 +82,7 @@ class MemoryEventDraft:
             "studentId": self.student_id,
             "category": self.category,
             "operation": self.operation,
-            "payload": self.payload,
+            "payload": self.payload.to_json_dict(),
             "confidence": self.confidence,
             "evidence": self.evidence,
             "source": self.source.to_json_dict(),
@@ -93,7 +105,7 @@ class DurableMemoryEvent:
             "messageId": self.draft.source.message_id,
             "category": self.draft.category,
             "operation": self.draft.operation,
-            "payload": self.draft.payload,
+            "payload": self.draft.payload.to_json_dict(),
             "confidence": self.draft.confidence,
             "evidence": self.draft.evidence,
             "source": self.source,
@@ -107,11 +119,12 @@ class DurableMemoryEvent:
     def from_json_dict(cls, event: JsonObject) -> DurableMemoryEvent:
         source = event.get("source", {})
         merge = event.get("merge", {})
+        category = memory_event_category(event.get("category"))
         draft = MemoryEventDraft(
             student_id=str(event.get("studentId") or ""),
-            category=memory_event_category(event.get("category")),
+            category=category,
             operation=memory_operation(event.get("operation")),
-            payload=event.get("payload", {}) if isinstance(event.get("payload"), dict) else {},
+            payload=parse_memory_payload(cast(PayloadMemoryEventCategory, category), event.get("payload", {})),
             confidence=confidence(event.get("confidence")),
             evidence=evidence_list(event.get("evidence")),
             source=MemoryEventSource(
@@ -187,15 +200,23 @@ def validation_errors(draft: MemoryEventDraft, checks: JsonObject) -> list[str]:
 
 
 def category_payload_compatible(draft: MemoryEventDraft) -> bool:
-    if not isinstance(draft.payload, dict):
-        return False
-    if draft.category == "route_outcome":
-        return draft.payload.get("outcome") in ROUTE_OUTCOMES
-    return True
+    return (
+        (draft.category == "academic" and isinstance(draft.payload, AcademicPayload))
+        or (draft.category in {"course_direction", "university_direction", "pathway_direction"} and isinstance(draft.payload, DirectionPayload))
+        or (draft.category == "counseling_preference" and isinstance(draft.payload, CounselingPreferencePayload))
+        or (draft.category == "rejected_option" and isinstance(draft.payload, RejectedOptionPayload))
+        or (draft.category in {"constraint", "quality_context", "concern"} and isinstance(draft.payload, QualitySignalPayload))
+        or (draft.category == "recommendation_interaction" and isinstance(draft.payload, RecommendationInteractionPayload))
+        or (draft.category == "handoff_readiness" and isinstance(draft.payload, HandoffReadinessPayload))
+        or (draft.category == "route_outcome" and isinstance(draft.payload, RouteOutcomePayload))
+    )
 
 
 def confirmed_preference_safe(draft: MemoryEventDraft) -> bool:
-    return draft.category != "counseling_preference" or draft.payload.get("status") == "confirmed_counseling_preference"
+    return draft.category != "counseling_preference" or (
+        isinstance(draft.payload, CounselingPreferencePayload)
+        and draft.payload.status == "confirmed_counseling_preference"
+    )
 
 
 def to_durable_event(draft: MemoryEventDraft, selected_skill_context: SkillSelection | JsonObject | None) -> DurableMemoryEvent:

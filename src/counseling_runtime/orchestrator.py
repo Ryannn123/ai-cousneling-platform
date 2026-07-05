@@ -132,7 +132,8 @@ class CounselingTurnOrchestrator:
         post_response_memory_commit_result = self.memory_state_service.commit_post_response_ai_outputs(student_id, accepted_semantic_delta, ai_execution_result, validation_result, boundary_result, skill_selection)
         committed_operating_context = validation_result.get("acceptedOperatingContext") or operating_context
         final_current_truth = self.memory_state_service.derive_current_truth(student_id)
-        commit_result = commit_turn(conversation_id, student_message, previous_state, committed_operating_context, validation_result.to_json_dict(), final_current_truth)
+        final_current_truth_json = final_current_truth.to_json_dict()
+        commit_result = commit_turn(conversation_id, student_message, previous_state, committed_operating_context, validation_result.to_json_dict(), final_current_truth_json)
         audit_event = write_audit_event(build_turn_audit_payload(
             conversation_id=conversation_id,
             student_message=student_message,
@@ -143,9 +144,9 @@ class CounselingTurnOrchestrator:
             ai_execution_result=ai_execution_result,
             validation_result=validation_result,
             commit_result=commit_result,
-            current_truth_before_turn=current_truth_before_turn,
-            current_truth=current_truth,
-            final_current_truth=final_current_truth,
+            current_truth_before_turn=current_truth_before_turn.to_json_dict(),
+            current_truth=current_truth.to_json_dict(),
+            final_current_truth=final_current_truth_json,
             pre_response_memory_commit_result=pre_response_memory_commit_result,
             post_response_memory_commit_result=post_response_memory_commit_result,
             response_retry=response_retry,
@@ -161,7 +162,7 @@ class CounselingTurnOrchestrator:
             "acceptedSemanticDelta": accepted_semantic_delta.to_json_dict(),
             "boundaryResult": boundary_result,
             "operatingContext": commit_result["committedContext"],
-            "currentTruth": final_current_truth,
+            "currentTruth": final_current_truth_json,
             "routeCandidate": route_candidate,
             "activeRouteEpisode": active_route_episode,
             "skillSelection": skill_selection,

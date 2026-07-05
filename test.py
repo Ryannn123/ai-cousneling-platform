@@ -26,8 +26,8 @@ async def run():
             studentMessage = 'i want to study business at taylor or UM',
         )
     extractor = AISemanticDeltaExtractor()
-    # delta_result = await extractor.extract(turn_input)
-    # pprint(result.model_dump())
+    validator = SemanticDeltaValidator()
+    memory_service = MemoryStateService()
     
     # delta_result = SemanticDeltaResult(
     #     memoryDeltaCandidates=MemoryDeltaCandidates(
@@ -50,13 +50,11 @@ async def run():
     #         )
     #     )
     # )
-    # validator = SemanticDeltaValidator()
+   
+    # delta_result = await extractor.extract(turn_input)
     # validated_delta = validator.validate(delta_result, turn_input, extractor)
-    
-    memory_service = MemoryStateService()
-    # commit_result = memory_service.commit_pre_response_student_memory(studentId, validated_delta)
-    # pprint(commit_result.to_json_dict())
+    # commit_result = memory_service.commit_pre_response_student_memory(student_id, validated_delta)
     truth = memory_service.derive_current_truth(student_id)
-    pprint(truth)
+    pprint(truth.to_json_dict())
     
 asyncio.run(run())

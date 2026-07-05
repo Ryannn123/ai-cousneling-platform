@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, TurnInput
+from .current_truth_schema import CurrentTruthProjection
 from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals
 
 
@@ -9,7 +10,7 @@ def build_operating_context(
     turn_input: TurnInput,
     boundary_result: BoundaryResult,
     accepted_semantic_delta: AcceptedSemanticDeltaInput,
-    current_truth: JsonObject,
+    current_truth: CurrentTruthProjection,
     active_route_episode: ActiveRouteEpisode,
 ) -> JsonObject:
     runtime_signals = accepted_runtime_only_signals(accepted_semantic_delta)
@@ -27,8 +28,8 @@ def build_operating_context(
         "boundary": boundary_result,
         "activeRouteEpisode": active_route_episode,
         "primaryCounselingAction": primary_action,
-        "recommendationReadiness": current_truth["recommendationReadiness"]["level"],
-        "preferenceStrength": current_truth["preference"]["preferenceStrength"],
+        "recommendationReadiness": current_truth.readiness.recommendation_level,
+        "preferenceStrength": current_truth.preference.strength,
         "handoffStatus": boundary_result.get("handoffStatus"),
         "currentTruth": current_truth_summary(current_truth),
         "studentPosture": posture,
@@ -127,31 +128,26 @@ def validation_requirements(boundary_result: BoundaryResult | JsonObject, route:
     ]
 
 
-def current_truth_summary(current_truth: JsonObject) -> JsonObject:
+def current_truth_summary(current_truth: CurrentTruthProjection) -> JsonObject:
     return {
-        "academicResultStatus": current_truth["academic"]["academicResultStatus"],
-        "courseDirectionStatus": current_truth["direction"]["courseDirectionStatus"],
-        "universityDirectionStatus": current_truth["direction"]["universityDirectionStatus"],
-        "pathwayDirectionStatus": current_truth["direction"]["pathwayDirectionStatus"],
-        "routeEpisodeProjection": current_truth["routeEpisodeProjection"],
-        "routeReadiness": current_truth["route"]["routeReadiness"],
-        "preferenceStrength": current_truth["preference"]["preferenceStrength"],
-        "recommendationReadiness": current_truth["recommendationReadiness"]["level"],
-        "handoffRequired": current_truth["handoffReadiness"]["handoffRequired"],
+        "academicResultStatus": current_truth.academic.status,
+        "courseDirectionStatus": current_truth.course.status,
+        "universityDirectionStatus": current_truth.university.status,
+        "pathwayDirectionStatus": current_truth.pathway.status,
+        "activeDirection": current_truth.active_direction.to_json_dict(),
+        "routeHistory": current_truth.route_history.to_json_dict(),
+        "routeReadiness": current_truth.readiness.route_level,
+        "preferenceStrength": current_truth.preference.strength,
+        "recommendationReadiness": current_truth.readiness.recommendation_level,
+        "handoffRequired": current_truth.handoff.required,
     }
 
 
-def active_direction_from_current_truth(current_truth: JsonObject) -> JsonObject | None:
-    preference = current_truth["preference"].get("confirmedCounselingPreference", {})
-    course = preference.get("courseOrProgram") or best_direction_value(current_truth["direction"]["activeCourseDirections"])
-    university = preference.get("university") or best_direction_value(current_truth["direction"]["activeUniversityDirections"])
-    pathway = preference.get("pathway") or best_direction_value(current_truth["direction"]["activePathwayDirections"])
+def active_direction_from_current_truth(current_truth: CurrentTruthProjection) -> JsonObject | None:
+    course = current_truth.active_direction.course
+    university = current_truth.active_direction.university
+    pathway = current_truth.active_direction.pathway
     return {**({"courseOrProgram": course} if course else {}), **({"university": university} if university else {}), **({"pathway": pathway} if pathway else {})} or None
-
-
-def best_direction_value(directions: list[JsonObject]) -> object:
-    rank = {"confirmed_counseling_preference": 3, "preferred": 2, "considering": 1}
-    return sorted(directions, key=lambda item: rank.get(str(item.get("status") or ""), 0), reverse=True)[0].get("value") if directions else None
 
 
 def default_move(route: ActiveRouteEpisode | JsonObject) -> str:
