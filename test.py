@@ -14,33 +14,33 @@ load_dotenv()
 
 async def run():
     turn_input = {
-        'studentMessage': 'i perhaps maybe confirm study business'
+        'studentMessage': 'i want to study business or IT at Taylor or UM'
     }
     extractor = AISemanticDeltaExtractor()
-    # delta_result = await extractor.extract(turn_input)
+    delta_result = await extractor.extract(turn_input)
     # pprint(result.model_dump())
     
-    delta_result = SemanticDeltaResult(
-        memoryDeltaCandidates=MemoryDeltaCandidates(
-            flowDrivingDeltas=FlowDrivingDeltas(
-                directions=[DirectionDelta(
-                    confidence='high',
-                    dimension='course',
-                    evidence=[Evidence(quote='a')],
-                    operation='add_new',
-                    status='considering',
-                    value='a'
-                ), DirectionDelta(
-                    confidence='low',
-                    dimension='course',
-                    evidence=[Evidence(quote='a')],
-                    operation='add_new',
-                    status='confirmed_counseling_preference',
-                    value='a'
-                )]
-            )
-        )
-    )
+    # delta_result = SemanticDeltaResult(
+    #     memoryDeltaCandidates=MemoryDeltaCandidates(
+    #         flowDrivingDeltas=FlowDrivingDeltas(
+    #             directions=[DirectionDelta(
+    #                 confidence='high',
+    #                 dimension='course',
+    #                 evidence=[Evidence(quote='a')],
+    #                 operation='add_new',
+    #                 status='considering',
+    #                 value='a'
+    #             ), DirectionDelta(
+    #                 confidence='low',
+    #                 dimension='course',
+    #                 evidence=[Evidence(quote='a')],
+    #                 operation='add_new',
+    #                 status='confirmed_counseling_preference',
+    #                 value='a'
+    #             )]
+    #         )
+    #     )
+    # )
     validator = SemanticDeltaValidator()
     validated_delta = validator.validate(delta_result, turn_input, extractor)
     

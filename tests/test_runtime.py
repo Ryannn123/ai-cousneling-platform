@@ -79,7 +79,7 @@ def course_deltas(text):
 def university_deltas(text):
     lower = text.lower()
     return [
-        {**base_delta(text, university), "dimension": "university", "value": title(university).replace("Apu", "APU").replace("Utar", "UTAR"), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and includes_term(lower, university) else "considering"}
+        {**base_delta(text, university), "dimension": "university", "universityType": "private", "value": title(university).replace("Apu", "APU").replace("Utar", "UTAR"), "status": "preferred" if re.search(r"\bprefer\b", text, re.I) and includes_term(lower, university) else "considering"}
         for university in TEST_UNIVERSITIES
         if includes_term(lower, university)
     ]

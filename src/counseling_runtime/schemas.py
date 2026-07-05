@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 JsonDict = dict[str, Any]
@@ -33,7 +33,10 @@ class BaseDelta(BaseModel):
 class DirectionDelta(BaseDelta):
     dimension: Literal["course", "university", "pathway"]
     value: str
-    universityType: Literal["private", "public"] | None = None
+    universityType: Literal["private", "public"] | None = Field(
+        default=None,
+        description='Required when dimension is university. Must be null otherwise'
+    )
     status: Literal["considering", "preferred", "confirmed_counseling_preference", "rejected"] = Field(
         description="""The student's current counseling stance toward this option.
 
@@ -50,6 +53,16 @@ class DirectionDelta(BaseDelta):
         if not value.strip():
             raise ValueError("value must not be empty")
         return value
+    
+    @model_validator(mode="after")
+    def validate_university_type(self):
+        if self.dimension == "university" and self.universityType is None:
+            raise ValueError("universityType is required when dimension is 'university'")
+
+        if self.dimension != "university" and self.universityType is not None:
+            raise ValueError("universityType must be None unless dimension is 'university'")
+
+        return self
 
 
 class AcademicResultDelta(BaseDelta):
