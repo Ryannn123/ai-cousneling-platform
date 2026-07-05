@@ -9,11 +9,11 @@ from .contracts import (
     CommitResult,
     ConversationState,
     JsonObject,
-    MemoryCommitResult,
     RouteCandidate,
     SkillSelection,
     ValidationResult,
 )
+from .memory import MemoryCommitResult
 from .schemas import AIExecutionResult, SemanticDeltaResult
 from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals, accepted_semantic_delta_json
 from .settings import AUDIT_PATH
@@ -112,8 +112,8 @@ def build_turn_audit_payload(
             "currentTruthBeforeTurn": current_truth_before_turn,
             "currentTruthAfterPreResponseCommit": current_truth,
             "currentTruthAfterPostResponseCommit": final_current_truth,
-            "preResponseMemoryCommitResult": pre_response_memory_commit_result,
-            "postResponseMemoryCommitResult": post_response_memory_commit_result,
+            "preResponseMemoryCommitResult": pre_response_memory_commit_result.to_json_dict(),
+            "postResponseMemoryCommitResult": post_response_memory_commit_result.to_json_dict(),
             "responseRetry": response_retry,
         },
         "routeAudit": {

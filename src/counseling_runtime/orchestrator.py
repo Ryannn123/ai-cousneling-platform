@@ -167,7 +167,7 @@ class CounselingTurnOrchestrator:
             "skillSelection": skill_selection,
             "validationResult": validation_result,
             "commitResult": commit_result,
-            "preResponseMemoryCommitResult": pre_response_memory_commit_result,
-            "postResponseMemoryCommitResult": post_response_memory_commit_result,
+            "preResponseMemoryCommitResult": pre_response_memory_commit_result.to_json_dict(),
+            "postResponseMemoryCommitResult": post_response_memory_commit_result.to_json_dict(),
             "auditEvent": audit_event,
         })

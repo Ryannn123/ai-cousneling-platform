@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from counseling_runtime.llm import AISemanticDeltaExtractor
 from counseling_runtime.semantic_delta import SemanticDeltaValidator
 from counseling_runtime.schemas import SemanticDeltaResult, MemoryDeltaCandidates, FlowDrivingDeltas, DirectionDelta, Evidence
-from counseling_runtime.memory_ingestion import MemoryIngestionPolicy
+from counseling_runtime.memory import event_draft_from_candidate
 
 load_dotenv()
 
@@ -44,8 +44,7 @@ async def run():
     validator = SemanticDeltaValidator()
     validated_delta = validator.validate(delta_result, turn_input, extractor)
     
-    memory_ingestor = MemoryIngestionPolicy()
-    decisions = memory_ingestor.pre_response_decisions('a', validated_delta)
+    decisions = [event_draft_from_candidate('a', validated_delta, candidate) for candidate in validated_delta.accepted_student_memory_candidates]
     pprint(validated_delta.to_json_dict())
     pprint(decisions)
     

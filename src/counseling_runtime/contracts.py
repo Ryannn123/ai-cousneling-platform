@@ -156,14 +156,6 @@ class ActiveRouteEpisode(RuntimeModel):
     source: JsonObject = Field(default_factory=dict)
 
 
-class MemoryCommitResult(RuntimeModel):
-    appendedMemoryEventIds: list[str] = Field(default_factory=list)
-    ignoredDuplicateEventIds: list[str] = Field(default_factory=list)
-    rejectedDeltaIds: list[str] = Field(default_factory=list)
-    auditEventIds: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-
-
 class ValidationResult(RuntimeModel):
     status: str
     finalResponse: str
@@ -197,6 +189,6 @@ class TurnResult(RuntimeModel):
     skillSelection: SkillSelection
     validationResult: ValidationResult
     commitResult: CommitResult
-    preResponseMemoryCommitResult: MemoryCommitResult
-    postResponseMemoryCommitResult: MemoryCommitResult
+    preResponseMemoryCommitResult: JsonObject
+    postResponseMemoryCommitResult: JsonObject
     auditEvent: JsonObject
