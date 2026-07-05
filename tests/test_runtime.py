@@ -260,7 +260,6 @@ async def test_ambiguous_proceed_clarifies_without_confirming_preference(tmp_pat
     assert result["boundaryResult"]["finalZone"] == "yellow"
     assert result["validationResult"]["status"] == "clarify"
     assert result["operatingContext"]["primaryCounselingAction"] == "clarify_ambiguity"
-    assert "memoryOutputs" not in result["runtimeState"]
 
 
 @pytest.mark.asyncio
@@ -281,16 +280,13 @@ async def test_unknown_factual_detour_is_caveated_without_memory_output(tmp_path
     result = await runtime.handle_turn({"conversationId": conversation["conversationId"], "studentMessage": "What is the fee for Medicine in London?"})
     assert result["operatingContext"]["activeRouteEpisode"]["progressState"] == "detour_resume"
     assert "do not have a verified catalog fact" in result["finalResponse"]
-    assert "memoryOutputs" not in result["runtimeState"]
 
 
 @pytest.mark.asyncio
 async def test_invalid_ai_official_action_output_is_blocked_before_commit(tmp_path):
     class BadExecutionClient:
         async def execute(self, execution_context):
-            return execution_result("answer", "Your registration completed successfully.", {"recommendationOutputs": [], "proposedContextUpdate": {}}, {"needsClarification": False, "boundarySensitive": False, "officialActionRisk": True, "memoryWriteRequiresValidation": True, "knowledgeUsed": False, "knowledgeUncertain": False}) | {
-                "proposedOutputs": {"memoryOutputs": [{"type": "registration_completed", "value": {"program": "Psychology"}, "confidence": "high", "evidence": "test"}], "recommendationOutputs": []}
-            }
+            return execution_result("answer", "Your registration completed successfully.", {"recommendationOutputs": [], "proposedContextUpdate": {}}, {"needsClarification": False, "boundarySensitive": False, "officialActionRisk": True, "memoryWriteRequiresValidation": True, "knowledgeUsed": False, "knowledgeUncertain": False})
 
     runtime = make_app(tmp_path, ai_execution_client=BadExecutionClient())
     conversation = runtime.create_conversation()
@@ -315,9 +311,11 @@ def test_knowledge_gateway_answers_seed_catalog_and_caveats_unknowns():
     gateway = KnowledgeGateway()
     accepted_delta = {"acceptedRuntimeOnlySignals": [{"kind": "knowledge_need", "type": "fees", "query": "What is the fee for Psychology in Kuala Lumpur?", "decisionCriticality": "possibly_decision_critical"}]}
     known = gateway.answer("What is the fee for Psychology in Kuala Lumpur?", accepted_delta)
+    assert known is not None
     assert known["answerable"] is True
     assert known["facts"][0]["program"] == "Psychology"
     unknown = gateway.answer("What is the fee for Medicine in London?", {"acceptedRuntimeOnlySignals": [{"kind": "knowledge_need", "type": "fees", "query": "What is the fee for Medicine in London?", "decisionCriticality": "decision_critical"}]})
+    assert unknown is not None
     assert unknown["answerable"] is False
     assert unknown["uncertaintyLevel"] == "decision_critical"
 

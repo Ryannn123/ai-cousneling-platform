@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from .contracts import ActiveRouteEpisode, JsonObject, RouteCandidate
+from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, RouteCandidate
 
 class RouteEpisodeCandidateResolver:
     def resolve(self, current_truth_projection: JsonObject, accepted_semantic_delta: JsonObject | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> RouteCandidate:
         route_signal = next((signal for signal in route_signals(accepted_semantic_delta) if signal.get("routeHint") and signal.get("confidence") in {"medium", "high"}), None)
-        route_type = route_signal.get("routeHint") if route_signal else derive_route_type(current_truth_projection, student_message)
+        route_hint = route_signal.get("routeHint") if route_signal else None
+        route_type = route_hint if isinstance(route_hint, str) else derive_route_type(current_truth_projection, student_message)
         return RouteCandidate.model_validate({
             "routeType": route_type,
             "routeGoal": route_goal(route_type),
@@ -25,7 +26,7 @@ class RouteEpisodePlanner:
     def __init__(self, transition_validator: "RouteTransitionValidator | None" = None) -> None:
         self.transition_validator = transition_validator or RouteTransitionValidator()
 
-    def plan(self, boundary_result: JsonObject, route_candidate: RouteCandidate, current_truth_projection: JsonObject, accepted_semantic_delta: JsonObject | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> ActiveRouteEpisode:
+    def plan(self, boundary_result: BoundaryResult | JsonObject, route_candidate: RouteCandidate, current_truth_projection: JsonObject, accepted_semantic_delta: JsonObject | None = None, previous_operating_context: JsonObject | None = None, student_message: str = "") -> ActiveRouteEpisode:
         prior = (previous_operating_context or {}).get("activeRouteEpisode")
         runtime_signals = (accepted_semantic_delta or {}).get("acceptedRuntimeOnlySignals", [])
         signals = [signal for signal in runtime_signals if signal.get("kind") == "route_episode"]
@@ -43,7 +44,7 @@ class RouteEpisodePlanner:
 
         if prior and should_continue_prior_route(prior, route_candidate, signals, boundary_result, current_truth_projection, student_message):
             active_route = prior["routeType"]
-            progress_state = progress_state_for_route({**route_candidate, "routeType": active_route}, current_truth_projection, runtime_signals)
+            progress_state = progress_state_for_route({**route_candidate.to_json_dict(), "routeType": active_route}, current_truth_projection, runtime_signals)
             audit_reason = f"Continuing sticky active route {active_route}."
 
         if boundary_result.get("allowedNextBehavior") == "handoff":
@@ -144,7 +145,7 @@ class RouteTransitionValidator:
 
 
 class RouteOutcomeValidator:
-    def validate(self, operating_context: JsonObject, accepted_semantic_delta: JsonObject, boundary_result: JsonObject) -> JsonObject:
+    def validate(self, operating_context: JsonObject, accepted_semantic_delta: JsonObject, boundary_result: BoundaryResult | JsonObject) -> JsonObject:
         route = operating_context.get("activeRouteEpisode") or {}
         candidate = route.get("routeOutcomeCandidate")
         if not candidate:
@@ -227,7 +228,7 @@ def candidate_evidence(current_truth: JsonObject, student_message: str) -> list[
     }}]
 
 
-def should_continue_prior_route(prior: JsonObject, route_candidate: RouteCandidate, route_signals_: list[JsonObject], boundary_result: JsonObject, current_truth_projection: JsonObject, student_message: str) -> bool:
+def should_continue_prior_route(prior: JsonObject, route_candidate: RouteCandidate, route_signals_: list[JsonObject], boundary_result: BoundaryResult | JsonObject, current_truth_projection: JsonObject, student_message: str) -> bool:
     if not prior.get("routeType") or prior.get("routeType") == "initial_route_selection" or prior.get("progressState") == "completed":
         return False
     if boundary_result.get("allowedNextBehavior") == "handoff":
@@ -307,14 +308,14 @@ def is_known_direction(status: str | None) -> bool:
 
 
 def best_direction(directions: list[JsonObject]) -> JsonObject | None:
-    return sorted(directions, key=lambda item: direction_rank(item.get("status")), reverse=True)[0] if directions else None
+    return sorted(directions, key=lambda item: direction_rank(str(item.get("status") or "")), reverse=True)[0] if directions else None
 
 
 def direction_rank(status: str | None) -> int:
     return {"confirmed_counseling_preference": 3, "preferred": 2, "considering": 1}.get(status or "", 0)
 
 
-def boundary_evidence(boundary_result: JsonObject, student_message: str) -> list[JsonObject]:
+def boundary_evidence(boundary_result: BoundaryResult | JsonObject, student_message: str) -> list[JsonObject]:
     return [{"quote": student_message or boundary_result.get("aiBoundaryReason") or "Boundary override", "source": "boundary_result", "triggerType": boundary_result.get("triggerType")}]
 
 

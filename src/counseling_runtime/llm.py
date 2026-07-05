@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from pydantic_ai import Agent
 
@@ -30,7 +31,7 @@ SEMANTIC_PROMPT = (
 class AISemanticDeltaExtractor:
     provider = "gemini"
 
-    def __init__(self, settings: Settings | None = None, agent: Agent | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, agent: Agent | Any | None = None) -> None:
         self.settings = settings or get_settings()
         self.model = self.settings.model_name
         self.agent = agent
@@ -46,7 +47,7 @@ class AISemanticDeltaExtractor:
 class AIExecutionClient:
     provider = "gemini"
 
-    def __init__(self, settings: Settings | None = None, agent: Agent | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, agent: Agent | Any | None = None) -> None:
         self.settings = settings or get_settings()
         self.model = self.settings.model_name
         self.agent = agent

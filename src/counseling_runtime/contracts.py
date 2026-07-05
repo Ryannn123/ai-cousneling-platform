@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, KeysView, ValuesView, ItemsView, Protocol
+from typing import Any, KeysView, ValuesView, ItemsView, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,9 +16,6 @@ class RuntimeModel(BaseModel):
 
     def __contains__(self, key: str) -> bool:
         return hasattr(self, key)
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self.model_dump(exclude_none=True))
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)

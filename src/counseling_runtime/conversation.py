@@ -45,7 +45,6 @@ def commit_turn(
     state["operatingContext"] = operating_context
     state["currentTruth"] = current_truth
     state.setdefault("routeOutcomeOutputs", [])
-    state.pop("memoryOutputs", None)
     state.setdefault("messages", []).append({"role": "student", "content": student_message, "timestamp": now})
     state["messages"].append({"role": "assistant", "content": validation_result["finalResponse"], "timestamp": now})
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .contracts import BoundaryResult, JsonObject
+from .contracts import BoundaryResult, JsonObject, TurnInput
 
 
 BOUNDARY_RULES_BY_TYPE = {
@@ -25,7 +25,7 @@ REASONS_BY_TYPE = {
 
 
 class BoundaryEngine:
-    def evaluate(self, turn_input: JsonObject, accepted_semantic_delta: JsonObject | None = None) -> BoundaryResult:
+    def evaluate(self, turn_input: TurnInput | JsonObject, accepted_semantic_delta: JsonObject | None = None) -> BoundaryResult:
         return BoundaryResolver().resolve(accepted_semantic_delta or {})
 
 
@@ -44,7 +44,7 @@ class BoundaryResolver:
                 "finalZone": "yellow",
                 "handoffStatus": "possible_clarify",
                 "detectedSignals": detected_signals(signals),
-                "aiBoundaryReason": REASONS_BY_TYPE.get(yellow.get("type"), "Boundary-sensitive ambiguity requires clarification."),
+                "aiBoundaryReason": reason_for_signal(yellow, "Boundary-sensitive ambiguity requires clarification."),
                 "requiredBoundaryRules": rules_for(signals),
                 "allowedNextBehavior": "clarify",
             })
@@ -62,18 +62,25 @@ class BoundaryResolver:
             "handoffStatus": "required",
             "triggerType": signal.get("triggerType") or "H1",
             "detectedSignals": detected_signals(all_signals),
-            "aiBoundaryReason": REASONS_BY_TYPE.get(signal.get("type"), "Student is asking for a red-zone official next step."),
+            "aiBoundaryReason": reason_for_signal(signal, "Student is asking for a red-zone official next step."),
             "requiredBoundaryRules": rules_for(all_signals),
             "allowedNextBehavior": "handoff",
         })
 
 
 def detected_signals(signals: list[JsonObject]) -> list[str]:
-    return list(dict.fromkeys(signal.get("type") for signal in signals if signal.get("type")))
+    return list(dict.fromkeys(signal_type for signal in signals if isinstance((signal_type := signal.get("type")), str)))
 
 
 def rules_for(signals: list[JsonObject]) -> list[str]:
     rules = ["no-official-action-boundary"]
     for signal in signals:
-        rules.extend(BOUNDARY_RULES_BY_TYPE.get(signal.get("type"), []))
+        signal_type = signal.get("type")
+        if isinstance(signal_type, str):
+            rules.extend(BOUNDARY_RULES_BY_TYPE.get(signal_type, []))
     return list(dict.fromkeys(rules))
+
+
+def reason_for_signal(signal: JsonObject, default: str) -> str:
+    signal_type = signal.get("type")
+    return REASONS_BY_TYPE.get(signal_type, default) if isinstance(signal_type, str) else default

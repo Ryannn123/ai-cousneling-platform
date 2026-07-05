@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from .audit import AuditEventStore
-from .contracts import JsonObject, MemoryCommitResult
+from .contracts import BoundaryResult, JsonObject, MemoryCommitResult, SkillSelection, ValidationResult
 from .safety import contains_official_truth
 from .settings import MEMORY_EVENTS_PATH
 from .storage import append_ndjson, read_ndjson
@@ -59,7 +59,7 @@ class MemoryEventStore:
 
 
 class MemoryEventValidator:
-    def validate(self, draft: JsonObject | None, selected_skill_context: JsonObject | None = None) -> JsonObject:
+    def validate(self, draft: JsonObject | None, selected_skill_context: SkillSelection | JsonObject | None = None) -> JsonObject:
         errors: list[str] = []
         warnings: list[str] = []
         invariant = {
@@ -96,15 +96,16 @@ class MemoryEventValidator:
             invariant["categoryPayloadCompatible"] = False
             errors.append("route_outcome_invalid")
         status = "reject" if errors else "valid_with_warnings" if warnings else "valid"
+        durable_event = self.to_durable_event(draft, selected_skill_context) if draft and not errors else None
         return {
             "status": status,
-            "durableEvent": None if errors else self.to_durable_event(draft, selected_skill_context),
+            "durableEvent": durable_event,
             "errors": errors,
             "warnings": warnings,
             "invariantChecks": invariant,
         }
 
-    def to_durable_event(self, draft: JsonObject, selected_skill_context: JsonObject | None) -> JsonObject:
+    def to_durable_event(self, draft: JsonObject, selected_skill_context: SkillSelection | JsonObject | None) -> JsonObject:
         selected = (selected_skill_context or {}).get("selectedRuntimeSkill") or {}
         return {
             "eventId": str(uuid4()),
@@ -215,7 +216,7 @@ class MemoryIngestionPolicy:
                 "operation": "add_new",
                 "payload": payload,
                 "confidence": delta.get("confidence", "medium"),
-                "evidence": normalize_evidence(delta.get("evidence"), delta.get("source")),
+                "evidence": normalize_evidence(delta.get("evidence"), str(delta.get("source") or "student_message")),
                 "source": {
                     "acceptedSemanticDeltaId": accepted_semantic_delta_id_of(accepted_semantic_delta),
                     "acceptedDeltaId": accepted_delta_id,
@@ -241,7 +242,7 @@ class MemoryIngestionPolicy:
 
 
 class MemoryStateService:
-    def __init__(self, memory_event_store: MemoryEventStore | None = None, audit_event_store: AuditEventStore | None = None, ingestion_policy: MemoryIngestionPolicy | None = None, memory_event_validator: MemoryEventValidator | None = None, current_truth_projector: "CurrentTruthProjector" | None = None) -> None:
+    def __init__(self, memory_event_store: MemoryEventStore | None = None, audit_event_store: AuditEventStore | None = None, ingestion_policy: MemoryIngestionPolicy | None = None, memory_event_validator: MemoryEventValidator | None = None, current_truth_projector: CurrentTruthProjector | None = None) -> None:
         self.memory_event_store = memory_event_store or MemoryEventStore()
         self.audit_event_store = audit_event_store or AuditEventStore()
         self.ingestion_policy = ingestion_policy or MemoryIngestionPolicy()
@@ -254,12 +255,15 @@ class MemoryStateService:
     def commit_pre_response_student_memory(self, student_id: str, accepted_semantic_delta: JsonObject, current_truth_before_commit: JsonObject) -> MemoryCommitResult:
         return self.commit_decisions(student_id, accepted_semantic_delta, None, self.ingestion_policy.pre_response_decisions(student_id, accepted_semantic_delta, current_truth_before_commit))
 
-    def commit_post_response_ai_outputs(self, student_id: str, accepted_semantic_delta: JsonObject, validated_ai_output: JsonObject, validation_result: JsonObject, final_boundary_result: JsonObject, selected_skill_context: JsonObject) -> MemoryCommitResult:
-        if validation_result.get("status") not in {"accepted", "downgraded", "blocked", "clarify", "handoff_override"}:
+    def commit_post_response_ai_outputs(self, student_id: str, accepted_semantic_delta: JsonObject, validated_ai_output: JsonObject, validation_result: ValidationResult | JsonObject, final_boundary_result: BoundaryResult | JsonObject, selected_skill_context: SkillSelection | JsonObject) -> MemoryCommitResult:
+        validation_json = validation_result.to_json_dict() if isinstance(validation_result, ValidationResult) else validation_result
+        boundary_json = final_boundary_result.to_json_dict() if isinstance(final_boundary_result, BoundaryResult) else final_boundary_result
+        skill_json = selected_skill_context.to_json_dict() if isinstance(selected_skill_context, SkillSelection) else selected_skill_context
+        if validation_json.get("status") not in {"accepted", "downgraded", "blocked", "clarify", "handoff_override"}:
             return empty_commit_result()
-        return self.commit_decisions(student_id, accepted_semantic_delta, selected_skill_context, self.ingestion_policy.post_response_decisions(student_id, accepted_semantic_delta, validated_ai_output, validation_result, final_boundary_result, selected_skill_context))
+        return self.commit_decisions(student_id, accepted_semantic_delta, skill_json, self.ingestion_policy.post_response_decisions(student_id, accepted_semantic_delta, validated_ai_output, validation_json, boundary_json, skill_json))
 
-    def commit_decisions(self, student_id: str, accepted_semantic_delta: JsonObject, selected_skill_context: JsonObject | None, decisions: list[JsonObject]) -> MemoryCommitResult:
+    def commit_decisions(self, student_id: str, accepted_semantic_delta: JsonObject, selected_skill_context: SkillSelection | JsonObject | None, decisions: list[JsonObject]) -> MemoryCommitResult:
         result = empty_commit_result()
         for decision in decisions:
             if decision.get("decision") != "create_memory_event":
@@ -474,7 +478,12 @@ def has_evidence(draft: JsonObject | None) -> bool:
 
 def normalize_evidence(evidence: object, source: str = "student_message") -> list[dict[str, str]]:
     items = evidence if isinstance(evidence, list) else [{"quote": evidence}]
-    return [{"quote": item["quote"], "source": "validated_ai_output" if source == "validated_ai_output" else "student_message"} for item in items if isinstance(item, dict) and isinstance(item.get("quote"), str) and item.get("quote").strip()]
+    normalized: list[dict[str, str]] = []
+    for item in items:
+        quote = item.get("quote") if isinstance(item, dict) else None
+        if isinstance(quote, str) and quote.strip():
+            normalized.append({"quote": quote, "source": "validated_ai_output" if source == "validated_ai_output" else "student_message"})
+    return normalized
 
 
 def evidence_from_output(output: JsonObject) -> list[dict[str, str]]:
@@ -497,6 +506,7 @@ def payload_for_output(output: JsonObject, selected_skill_context: JsonObject) -
     selected = selected_skill_context.get("selectedRuntimeSkill", {})
     if output.get("type") == "route_outcome":
         value = output.get("value", {})
+        value = value if isinstance(value, dict) else {}
         return {"type": output.get("type"), **value, "outcome": value.get("outcome"), "status": value.get("outcome"), "skillName": selected.get("name")}
     return {"type": output.get("type"), "value": output.get("value") or output, "status": output.get("type"), "skillName": selected.get("name")}
 
@@ -511,7 +521,7 @@ def same_text(a: object, b: object) -> bool:
 
 def stronger_direction(current: JsonObject, next_item: JsonObject) -> JsonObject:
     rank = {"considering": 1, "preferred": 2, "confirmed_counseling_preference": 3}
-    return next_item if rank.get(next_item.get("status"), 0) >= rank.get(current.get("status"), 0) else {**current, "supportingEventIds": next_item["supportingEventIds"]}
+    return next_item if rank.get(str(next_item.get("status") or ""), 0) >= rank.get(str(current.get("status") or ""), 0) else {**current, "supportingEventIds": next_item["supportingEventIds"]}
 
 
 def direction_status(options: list[JsonObject], option_type: str) -> str:

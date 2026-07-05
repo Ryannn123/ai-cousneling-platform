@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from .constants import MANDATORY_BOUNDARY_RULES
-from .contracts import JsonObject, SkillSelection
+from .contracts import BoundaryResult, JsonObject, SkillSelection
 from .settings import SKILLS_DIR
 
 
@@ -66,21 +66,28 @@ class SkillControlService:
             loaded.append(parsed)
         return {"loaded": loaded, "rejected": rejected}
 
-    def select(self, operating_context: JsonObject, boundary_result: JsonObject) -> SkillSelection:
+    def select(self, operating_context: JsonObject, boundary_result: BoundaryResult | JsonObject) -> SkillSelection:
         inventory = self.get_skill_inventory()
         rejected_candidates = [{"skill": item["skill"], "reason": item["reason"]} for item in inventory["rejected"]]
+        primary_action = operating_context.get("primaryCounselingAction")
         runtime_skill_name = (
             "ready-to-register-handoff"
             if boundary_result.get("allowedNextBehavior") == "handoff"
-            else ACTION_TO_SKILL.get(operating_context.get("primaryCounselingAction"), "interest-exploration")
+            else ACTION_TO_SKILL.get(primary_action if isinstance(primary_action, str) else "", "interest-exploration")
         )
 
         selected_runtime_skill = find_compatible(inventory["loaded"], runtime_skill_name, "runtime_skill", operating_context, rejected_candidates)
         selected_runtime_package = next((skill for skill in inventory["loaded"] if skill.ref.get("name") == selected_runtime_skill.get("name")), None) if selected_runtime_skill else None
         route = operating_context.get("activeRouteEpisode") or {}
-        playbook_name = PROGRESS_TO_PLAYBOOK.get(route.get("progressState"))
+        progress_state = route.get("progressState")
+        playbook_name = PROGRESS_TO_PLAYBOOK.get(progress_state if isinstance(progress_state, str) else "")
         selected_playbook = find_compatible(inventory["loaded"], playbook_name, "playbook", operating_context, rejected_candidates, True) if playbook_name else None
-        boundary_rule_names = list(dict.fromkeys([*MANDATORY_BOUNDARY_RULES, *boundary_result.get("requiredBoundaryRules", [])]))
+        required_rules = boundary_result.get("requiredBoundaryRules", [])
+        boundary_rule_names = [
+            name
+            for name in dict.fromkeys([*MANDATORY_BOUNDARY_RULES, *(required_rules if isinstance(required_rules, list) else [])])
+            if isinstance(name, str)
+        ]
         loaded_boundary_rules = [
             item
             for name in boundary_rule_names
@@ -136,9 +143,11 @@ def find_compatible(
 
 def compatibility_failure(metadata: JsonObject, context: JsonObject) -> str | None:
     route = context.get("activeRouteEpisode") or {}
+    route_episode = metadata.get("route_episode", {})
+    route_episode = route_episode if isinstance(route_episode, dict) else {}
     checks = [
-        (metadata.get("route_episode", {}).get("applies_to_active_routes") or metadata.get("applies_to_active_routes"), route.get("routeType"), "route"),
-        (metadata.get("route_episode", {}).get("applies_to_progress_states") or metadata.get("applies_to_progress_states"), route.get("progressState"), "progress"),
+        (route_episode.get("applies_to_active_routes") or metadata.get("applies_to_active_routes"), route.get("routeType"), "route"),
+        (route_episode.get("applies_to_progress_states") or metadata.get("applies_to_progress_states"), route.get("progressState"), "progress"),
         (metadata.get("applies_to_actions"), context.get("primaryCounselingAction"), "action"),
         (metadata.get("applies_to_zones"), context.get("currentZone"), "zone"),
         (metadata.get("applies_to_recommendation_readiness"), context.get("recommendationReadiness"), "readiness"),

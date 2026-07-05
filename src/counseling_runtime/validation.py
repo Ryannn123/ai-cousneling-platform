@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from .contracts import JsonObject, ValidationResult
-from .constants import OFFICIAL_ACTION_OUTPUTS
+from .contracts import BoundaryResult, JsonObject, SkillSelection, ValidationResult
 from .routes import RouteOutcomeValidator, route_goal
 from .safety import (
     claims_official_completion,
@@ -17,7 +16,7 @@ class ValidationPipeline:
     def __init__(self, route_outcome_validator: RouteOutcomeValidator | None = None) -> None:
         self.route_outcome_validator = route_outcome_validator or RouteOutcomeValidator()
 
-    def validate(self, ai_execution_result: JsonObject, boundary_result: JsonObject, operating_context: JsonObject, skill_selection: JsonObject, accepted_semantic_delta: JsonObject) -> ValidationResult:
+    def validate(self, ai_execution_result: JsonObject, boundary_result: BoundaryResult | JsonObject, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: JsonObject) -> ValidationResult:
         validation_events: list[JsonObject] = []
         blocked_outputs: list[JsonObject] = []
         accepted_recommendations: list[JsonObject] = []
@@ -28,6 +27,7 @@ class ValidationPipeline:
             status = "handoff_override"
             validation_events.append({"type": "boundary_override", "severity": "warning", "message": "Red-zone boundary overrides normal counseling."})
         if claims_official_completion(final_response):
+            blocked_outputs.append({"type": "student_facing_response", "reason": "official_action_output_not_commit_eligible", "blockedValue": final_response})
             final_response = "I cannot complete application, registration, payment, enrollment, seat reservation, or CRM actions. I can prepare a handoff so a human counselor can continue."
             status = "safe_fallback"
             validation_events.append({"type": "official_action_language_blocked", "severity": "error", "message": "Student-facing response implied official completion."})
@@ -45,10 +45,6 @@ class ValidationPipeline:
         if alignment["status"] == "reject":
             final_response = "Let me keep this focused on the current counseling route. We can continue safely with one next step without treating the route as complete yet."
             status = "safe_fallback"
-
-        for output in (ai_execution_result.get("proposedOutputs", {}).get("memoryOutputs") or []):
-            if output.get("type") in OFFICIAL_ACTION_OUTPUTS:
-                blocked_outputs.append({"output": output, "reason": "official_action_output_not_commit_eligible"})
 
         for output in ai_execution_result.get("proposedOutputs", {}).get("recommendationOutputs", []):
             if output.get("confidence") == "high" and operating_context.get("recommendationReadiness") != "R3":

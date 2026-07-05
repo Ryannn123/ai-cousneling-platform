@@ -94,7 +94,6 @@ class AIResponse(BaseModel):
 class ProposedOutputs(BaseModel):
     recommendationOutputs: list[JsonDict] = Field(default_factory=list)
     handoffOutput: JsonDict | None = None
-    memoryOutputs: list[JsonDict] | None = None
 
 
 class ValidationFlags(BaseModel):

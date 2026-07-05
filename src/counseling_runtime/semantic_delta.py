@@ -22,7 +22,7 @@ class SemanticDeltaValidator:
     def validate(
         self,
         raw_semantic_delta: JsonObject,
-        turn_input: TurnInput,
+        turn_input: TurnInput | JsonObject,
         extractor: object | None = None,
         skill_context: JsonObject | None = None,
     ) -> JsonObject:
@@ -183,7 +183,7 @@ def validate_candidate(path: str, candidate: JsonObject, rejected: list[JsonObje
     return True
 
 
-def build_metadata(turn_input: TurnInput, extractor: object | None, skill_context: JsonObject | None) -> JsonObject:
+def build_metadata(turn_input: TurnInput | JsonObject, extractor: object | None, skill_context: JsonObject | None) -> JsonObject:
     metadata = {
         "conversationId": turn_input.get("conversationId"),
         "turnId": turn_input.get("turnId"),

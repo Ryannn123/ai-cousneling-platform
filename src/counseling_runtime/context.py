@@ -83,13 +83,14 @@ def response_mode_from_route(boundary_result: BoundaryResult | JsonObject, route
 
 
 def posture_from_route(route: ActiveRouteEpisode | JsonObject) -> str:
+    route_type = route.get("routeType")
     return {
         "university_exploration": "course_first",
         "course_exploration_within_university_context": "university_first",
         "pathway_exploration": "pathway_first",
         "combined_option_validation": "validation_seeking",
         "course_exploration": "lost_or_confused",
-    }.get(route.get("routeType"), "just_browsing")
+    }.get(route_type if isinstance(route_type, str) else "", "just_browsing")
 
 
 def decision_support_mode(route: ActiveRouteEpisode | JsonObject) -> str | None:
@@ -105,18 +106,15 @@ def next_best_move(boundary_result: BoundaryResult | JsonObject, route: ActiveRo
         return "Prepare handoff without completing any official action."
     if boundary_result.get("allowedNextBehavior") == "clarify":
         return "Clarify whether the student means counseling preference or official action."
-    return {
+    moves = {
         "detour_resume": "Answer factual detour with known facts or caveats, then resume the active route.",
         "comparison": "Compare or shortlist options inside the active route.",
         "confirmed_preference": "Confirm counseling preference without treating it as official action.",
         "deferral_indecision": "Support deferral or indecision without forcing a choice.",
         "recommendation_ready": "Give a directional recommendation or ask one route-fit question.",
-    }.get(
-        route.get("progressState"),
-        "Ask one useful question to identify the first counseling route."
-        if route.get("routeType") == "initial_route_selection"
-        else "Explore the active route and ask one purposeful next question.",
-    )
+    }
+    progress_state = route.get("progressState")
+    return moves.get(progress_state if isinstance(progress_state, str) else "", default_move(route))
 
 
 def validation_requirements(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> list[str]:
@@ -152,4 +150,10 @@ def active_direction_from_current_truth(current_truth: JsonObject) -> JsonObject
 
 def best_direction_value(directions: list[JsonObject]) -> object:
     rank = {"confirmed_counseling_preference": 3, "preferred": 2, "considering": 1}
-    return sorted(directions, key=lambda item: rank.get(item.get("status"), 0), reverse=True)[0].get("value") if directions else None
+    return sorted(directions, key=lambda item: rank.get(str(item.get("status") or ""), 0), reverse=True)[0].get("value") if directions else None
+
+
+def default_move(route: ActiveRouteEpisode | JsonObject) -> str:
+    if route.get("routeType") == "initial_route_selection":
+        return "Ask one useful question to identify the first counseling route."
+    return "Explore the active route and ask one purposeful next question."

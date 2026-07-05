@@ -113,17 +113,17 @@ class CounselingTurnOrchestrator:
         validation_result = self.validation_pipeline.validate(ai_execution_result, boundary_result, operating_context, skill_selection, accepted_semantic_delta)
         response_retry = None
         if validation_result["status"] == "safe_fallback":
-            retry_context = {**execution_context, "responseRetry": {"attempt": 1, "previousValidationStatus": validation_result["status"], "validationEvents": validation_result["validationEvents"]}}
+            retry_context = {**execution_context.to_json_dict(), "responseRetry": {"attempt": 1, "previousValidationStatus": validation_result["status"], "validationEvents": validation_result["validationEvents"]}}
             retry_ai_execution_result = await self.ai_execution_client.execute(retry_context)
             retry_validation_result = self.validation_pipeline.validate(retry_ai_execution_result, boundary_result, operating_context, skill_selection, accepted_semantic_delta)
             response_retry = {"attempted": True, "firstValidationStatus": validation_result["status"], "retryValidationStatus": retry_validation_result["status"]}
             ai_execution_result = retry_ai_execution_result
-            validation_result = {**retry_validation_result, "responseRetry": response_retry}
+            validation_result = retry_validation_result.model_copy(update={"responseRetry": response_retry})
 
         post_response_memory_commit_result = self.memory_state_service.commit_post_response_ai_outputs(student_id, accepted_semantic_delta, ai_execution_result, validation_result, boundary_result, skill_selection)
         committed_operating_context = validation_result.get("acceptedOperatingContext") or operating_context
         final_current_truth = self.memory_state_service.derive_current_truth(student_id, conversation_id, turn_input["turnId"])
-        commit_result = commit_turn(conversation_id, student_message, previous_state, committed_operating_context, validation_result, final_current_truth)
+        commit_result = commit_turn(conversation_id, student_message, previous_state, committed_operating_context, validation_result.to_json_dict(), final_current_truth)
         audit_event = write_audit_event(build_turn_audit_payload(
             conversation_id=conversation_id,
             student_message=student_message,
