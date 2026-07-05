@@ -13,10 +13,10 @@ load_dotenv()
 
 async def run():
     turn_input = {
-        'studentMessage': 'i want to study business at Taylor or UM'
+        'studentMessage': 'i perhaps maybe confirm study business'
     }
     extractor = AISemanticDeltaExtractor()
-    # result = await extractor.extract(turn_input)
+    delta_result = await extractor.extract(turn_input)
     # pprint(result.model_dump())
     
     # class Result(BaseModel):
@@ -27,28 +27,28 @@ async def run():
     # result = await agent.run('what is ai?')
     # print(result)
     
-    delta_result = SemanticDeltaResult(
-        memoryDeltaCandidates=MemoryDeltaCandidates(
-            flowDrivingDeltas=FlowDrivingDeltas(
-                coursesConsidering=[DirectionDelta(
-                    confidence='high',
-                    evidence=[Evidence(quote='a')],
-                    operation='add_new',
-                    status='considering',
-                    value='a'
-                )],
-                confirmedCounselingCoursePreferences=DirectionDelta(
-                    confidence='low',
-                    evidence=[Evidence(quote='a')],
-                    operation='add_new',
-                    status='confirmed_counseling_preference',
-                    value='a'
-                )
-            )
-        )
-    )
+    # delta_result = SemanticDeltaResult(
+    #     memoryDeltaCandidates=MemoryDeltaCandidates(
+    #         flowDrivingDeltas=FlowDrivingDeltas(
+    #             coursesConsidering=[DirectionDelta(
+    #                 confidence='high',
+    #                 evidence=[Evidence(quote='a')],
+    #                 operation='add_new',
+    #                 status='considering',
+    #                 value='a'
+    #             )],
+    #             confirmedCounselingCoursePreferences=DirectionDelta(
+    #                 confidence='low',
+    #                 evidence=[Evidence(quote='a')],
+    #                 operation='add_new',
+    #                 status='confirmed_counseling_preference',
+    #                 value='a'
+    #             )
+    #         )
+    #     )
+    # )
     validator = SemanticDeltaValidator()
     validated_delta = validator.validate(delta_result, turn_input, extractor)
-    pprint(validated_delta)
+    pprint(validated_delta.to_json_dict())
     
 asyncio.run(run())

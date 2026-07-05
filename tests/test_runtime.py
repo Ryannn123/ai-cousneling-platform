@@ -351,9 +351,10 @@ async def test_gemini_client_uses_pydantic_ai_structured_output():
 
 
 def test_semantic_delta_validator_passes_current_truth_metadata():
-    accepted = SemanticDeltaValidator().validate(mock_semantic_delta({"studentMessage": "Psychology sounds interesting."}), {"conversationId": "c1", "turnId": "t1", "messageId": "m1", "studentMessage": "Psychology sounds interesting."}, MockSemanticDeltaExtractor())
-    assert accepted.platform_metadata["conversationId"] == "c1"
-    assert accepted.accepted_memory_deltas["flowDrivingDeltas"]["coursesConsidering"][0]["value"] == "Psychology"
+    accepted = SemanticDeltaValidator().validate(SemanticDeltaResult.model_validate(mock_semantic_delta({"studentMessage": "Psychology sounds interesting."})), {"conversationId": "c1", "turnId": "t1", "messageId": "m1", "studentMessage": "Psychology sounds interesting."}, MockSemanticDeltaExtractor())
+    assert accepted.platform_metadata.conversationId == "c1"
+    assert accepted.accepted_memory_deltas.flowDrivingDeltas.coursesConsidering[0].value == "Psychology"
+    assert accepted.to_json_dict()["platformMetadata"]["conversationId"] == "c1"
 
 
 def test_runtime_only_signal_schema_rejects_cross_kind_fields():

@@ -79,7 +79,7 @@ class CounselingTurnOrchestrator:
             raise RuntimeErrorWithStatus("Conversation not found", 404)
 
         student_id = conversation_id
-        current_truth_before_turn = self.memory_state_service.derive_current_truth(student_id, conversation_id)
+        current_truth_before_turn = self.memory_state_service.derive_current_truth(student_id)
         turn_input = TurnInput(
             conversationId = conversation_id,
             turnId = str(uuid4()),
@@ -94,7 +94,7 @@ class CounselingTurnOrchestrator:
         accepted_semantic_delta = self.semantic_delta_validator.validate(raw_semantic_delta, turn_input, self.ai_semantic_delta_extractor)
         
         pre_response_memory_commit_result = self.memory_state_service.commit_pre_response_student_memory(student_id, accepted_semantic_delta, current_truth_before_turn)
-        current_truth = self.memory_state_service.derive_current_truth(student_id, conversation_id, turn_input["turnId"])
+        current_truth = self.memory_state_service.derive_current_truth(student_id)
         
         route_candidate = self.route_episode_candidate_resolver.resolve(current_truth, accepted_semantic_delta, previous_state.get("operatingContext"), student_message)
         boundary_result = self.boundary_engine.evaluate(turn_input, accepted_semantic_delta)
@@ -131,7 +131,7 @@ class CounselingTurnOrchestrator:
 
         post_response_memory_commit_result = self.memory_state_service.commit_post_response_ai_outputs(student_id, accepted_semantic_delta, ai_execution_result, validation_result, boundary_result, skill_selection)
         committed_operating_context = validation_result.get("acceptedOperatingContext") or operating_context
-        final_current_truth = self.memory_state_service.derive_current_truth(student_id, conversation_id, turn_input["turnId"])
+        final_current_truth = self.memory_state_service.derive_current_truth(student_id)
         commit_result = commit_turn(conversation_id, student_message, previous_state, committed_operating_context, validation_result.to_json_dict(), final_current_truth)
         audit_event = write_audit_event(build_turn_audit_payload(
             conversation_id=conversation_id,

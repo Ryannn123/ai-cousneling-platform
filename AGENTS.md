@@ -2,27 +2,28 @@
 
 ## Project Structure & Module Organization
 
-This is a Node.js ESM prototype for a bounded autonomous counseling runtime. The HTTP entry point is `src/server.js`, which serves the browser UI from `public/` and exposes API endpoints under `/api`. Runtime services live in `src/runtime/`, including boundary checks, skill control, validation, audit writing, and orchestration. Runtime skills are Markdown artifacts in `skills/*/SKILL.md`; keep their front matter complete and use `status: approved` for loadable skills. Seed knowledge and runtime logs live under `data/`, while product and phase notes live in `specs/`. Tests are in `test/`.
+This is a typed Python prototype for a bounded autonomous counseling runtime. The FastAPI entry point is `src/counseling_runtime/api/app.py`, which serves the browser UI from `public/` and exposes API endpoints under `/api`. Runtime services live in `src/counseling_runtime/`, including boundary checks, skill control, validation, audit writing, memory, knowledge loading, LLM integration, and orchestration. Runtime skills are Markdown artifacts in `skills/*/SKILL.md`; keep their front matter complete and use `status: approved` for loadable skills. Seed catalog data lives in `data/knowledge/`, runtime JSON/NDJSON logs live under `data/runtime/`, and product and phase notes live in `specs/`. Tests are in `tests/`.
 
 ## Build, Test, and Development Commands
 
-- `npm start`: run the server with `.env` loaded via `node --env-file=.env src/server.js`.
-- `npm run dev`: run the server in Node watch mode for local iteration.
-- `npm test`: run all tests with Node's built-in test runner.
+- `uv run uvicorn counseling_runtime.api.app:app --host 0.0.0.0 --port 3000`: run the FastAPI server.
+- `uv run uvicorn counseling_runtime.api.app:app --host 0.0.0.0 --port 3000 --reload`: run the server with reload for local iteration.
+- `uv run pytest`: run all tests.
+- `uv run pyright`: run static type checking.
 
-The app expects Node `>=22`. By default the server listens on `http://localhost:3000`; override with `PORT=...` in `.env`.
+The app expects Python `>=3.12` and uses `uv` for dependency management. By default the server listens on `http://localhost:3000`; override the port in the uvicorn command or with `PORT=...` in `.env` where supported by runtime settings.
 
 ## Coding Style & Naming Conventions
 
-Use modern JavaScript modules with explicit `.js` imports. Match the existing style: two-space indentation, double quotes, semicolons, and `camelCase` for variables and functions. Runtime classes use `PascalCase` and are exported by name, for example `BoundaryEngine` or `CounselingTurnOrchestrator`. Keep runtime modules focused on one responsibility and prefer Node standard-library APIs before adding dependencies.
+Use modern typed Python. Match the existing style: four-space indentation, explicit type hints on public interfaces, `snake_case` for variables and functions, and `PascalCase` for classes and Pydantic models. Runtime classes use clear responsibility names, for example `BoundaryEngine` or `CounselingTurnOrchestrator`. Keep runtime modules focused on one responsibility and prefer Python standard-library APIs before adding dependencies.
 
 ## Testing Guidelines
 
-Tests use `node:test` and `node:assert/strict`. Add coverage in `test/runtime.test.js` or a new `*.test.js` file under `test/` when behavior changes. Name tests by the behavior being protected, such as `official-action wording variants hand off instead of continuing counseling`. Include both happy paths and safety boundaries for counseling state, skill selection, output validation, and provider fallbacks.
+Tests use `pytest` with `pytest-asyncio` for async behavior. Add coverage in `tests/test_runtime.py` or a new `test_*.py` file under `tests/` when behavior changes. Name tests by the behavior being protected, such as `test_official_action_wording_variants_hand_off_instead_of_continuing_counseling`. Include both happy paths and safety boundaries for counseling state, skill selection, output validation, and provider fallbacks.
 
 ## Security & Configuration Tips
 
-Keep secrets in `.env` and do not commit API keys or generated runtime logs containing sensitive conversation data. Validate any new memory or recommendation output through `ValidationPipeline` before committing it to runtime state. Official actions such as registration, payment, enrollment, reservation, or application submission must remain red-zone handoff behavior.
+Keep secrets in `.env` and do not commit API keys or generated runtime logs containing sensitive conversation data. Gemini is the live LLM provider; configure it with `GEMINI_API_KEY` and `GEMINI_MODEL`. Validate any new memory or recommendation output through `ValidationPipeline` before committing it to runtime state. Official actions such as registration, payment, enrollment, reservation, or application submission must remain red-zone handoff behavior.
 
 ## Agent-Specific Instructions
 
