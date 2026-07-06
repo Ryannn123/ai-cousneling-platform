@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from .contracts import JsonObject
+from .schemas import RouteType
 
 
 MemoryEventCategory = Literal[
@@ -108,7 +109,7 @@ class RouteOutcomePayload:
     type: str
     outcome: RouteOutcome
     status: str
-    route_type: str | None
+    route_type: RouteType | None
     progress_state: str | None
     previous_route: str | None
     next_route_candidate: str | None
@@ -185,7 +186,7 @@ def parse_memory_payload(category: MemoryEventCategory, payload: object) -> Memo
         type=str(data.get("type") or "route_outcome"),
         outcome=route_outcome(data.get("outcome") or data.get("status")),
         status=str(data.get("status") or data.get("outcome") or ""),
-        route_type=optional_str(data.get("routeType")),
+        route_type=route_type(data.get("routeType")),
         progress_state=optional_str(data.get("progressState")),
         previous_route=optional_str(data.get("previousRoute")),
         next_route_candidate=optional_str(data.get("nextRouteCandidate")),
@@ -199,6 +200,12 @@ def route_outcome(value: object) -> RouteOutcome:
     if value not in {"confirmed_preference", "accepted_fallback", "deferred_decision", "student_switched_route", "blocked_by_boundary", "handoff_required"}:
         raise ValueError(f"invalid route outcome: {value}")
     return cast(RouteOutcome, value)
+
+
+def route_type(value: object) -> RouteType | None:
+    if value is None:
+        return None
+    return cast(RouteType, value)
 
 
 def optional_str(value: object) -> str | None:

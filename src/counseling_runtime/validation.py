@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from .contracts import BoundaryResult, JsonObject, SkillSelection, ValidationResult
+from .contracts import JsonObject, SkillSelection, ValidationResult
+from .boundary import BoundaryResult
 from .routes import RouteOutcomeValidator, route_goal
 from .safety import (
     claims_official_completion,
@@ -11,21 +12,21 @@ from .safety import (
     contains_old_minimum_profile_language,
 )
 from .schemas import AIExecutionResult
-from .semantic_delta import AcceptedSemanticDeltaInput
+from .semantic_delta import AcceptedSemanticDelta
 
 
 class ValidationPipeline:
     def __init__(self, route_outcome_validator: RouteOutcomeValidator | None = None) -> None:
         self.route_outcome_validator = route_outcome_validator or RouteOutcomeValidator()
 
-    def validate(self, ai_execution_result: AIExecutionResult | JsonObject, boundary_result: BoundaryResult | JsonObject, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput) -> ValidationResult:
+    def validate(self, ai_execution_result: AIExecutionResult | JsonObject, boundary_result: BoundaryResult, operating_context: JsonObject, skill_selection: SkillSelection | JsonObject, accepted_semantic_delta: AcceptedSemanticDelta) -> ValidationResult:
         validation_events: list[JsonObject] = []
         blocked_outputs: list[JsonObject] = []
         accepted_recommendations: list[JsonObject] = []
         final_response = response_text(ai_execution_result)
         status = "accepted"
 
-        if boundary_result.get("allowedNextBehavior") == "handoff":
+        if boundary_result.allowedNextBehavior == "handoff":
             status = "handoff_override"
             validation_events.append({"type": "boundary_override", "severity": "warning", "message": "Red-zone boundary overrides normal counseling."})
         if claims_official_completion(final_response):
@@ -58,15 +59,15 @@ class ValidationPipeline:
                 accepted_recommendations.append(output)
 
         accepted_handoff = None
-        if boundary_result.get("allowedNextBehavior") == "handoff":
-            accepted_handoff = proposed_outputs.get("handoffOutput") or {"required": True, "triggerType": boundary_result.get("triggerType"), "reason": boundary_result.get("aiBoundaryReason"), "summary": "Red-zone handoff required."}
+        if boundary_result.allowedNextBehavior == "handoff":
+            accepted_handoff = proposed_outputs.get("handoffOutput") or {"required": True, "triggerType": boundary_result.triggerType, "reason": boundary_result.aiBoundaryReason, "summary": "Red-zone handoff required."}
 
         route_outcome_validation = self.route_outcome_validator.validate(operating_context, accepted_semantic_delta, boundary_result)
         validation_events.extend(route_outcome_validation.get("validationEvents", []))
         accepted_operating_context = context_after_rejected_route_outcome(operating_context, route_outcome_validation) if route_outcome_validation["status"] == "reject" else operating_context
         if blocked_outputs and status == "accepted":
             status = "blocked"
-        if boundary_result.get("allowedNextBehavior") == "clarify":
+        if boundary_result.allowedNextBehavior == "clarify":
             status = "clarify"
         return ValidationResult.model_validate({
             "status": status,

@@ -5,13 +5,14 @@ from pydantic import BaseModel
 from typing import Literal
 from dotenv import load_dotenv
 from uuid import uuid4
-from dataclasses import asdict
 
 from counseling_runtime.contracts import TurnInput
 from counseling_runtime.llm import AISemanticDeltaExtractor
 from counseling_runtime.semantic_delta import SemanticDeltaValidator
-from counseling_runtime.schemas import SemanticDeltaResult, MemoryDeltaCandidates, FlowDrivingDeltas, DirectionDelta, Evidence, AcademicResultDelta, QualityEnhancingDelta
+from counseling_runtime.schemas import SemanticDeltaResult, MemoryDeltaCandidates, FlowDrivingDeltas, DirectionDelta, Evidence, AcademicResultDelta, QualityEnhancingDelta, BoundarySignal
 from counseling_runtime.memory import MemoryStateService
+from counseling_runtime.routes import RouteEpisodeCandidateResolver
+from counseling_runtime.boundary import BoundaryEngine
 
 load_dotenv()
 
@@ -29,6 +30,8 @@ async def run():
     extractor = AISemanticDeltaExtractor()
     validator = SemanticDeltaValidator()
     memory_service = MemoryStateService()
+    route_candidate_resolver = RouteEpisodeCandidateResolver()
+    boundary_engine = BoundaryEngine()
     
     delta_result = SemanticDeltaResult(
         memoryDeltaCandidates=MemoryDeltaCandidates(
@@ -57,13 +60,26 @@ async def run():
             #         value={'prefer': 'logic'}
             #     )
             # ]
-        )
+        ),
+        runtimeOnlySignalCandidates=[
+            BoundarySignal(
+                kind='boundary',
+                confidence='high',
+                evidence=[Evidence(quote='a')],
+                recommendedBehavior='handoff',
+                severityCandidate='red',
+                triggerType='H1',
+                type='ready_to_apply_or_register'
+            )
+        ]
     )
    
     # delta_result = await extractor.extract(turn_input)
-    # validated_delta = validator.validate(delta_result, turn_input, extractor)
-    # memory_service.commit_pre_response_student_memory(student_id, validated_delta)
-    truth = memory_service.derive_current_truth(student_id)
-    pprint(truth.to_json_dict())
+    accepted_delta = validator.validate(delta_result, turn_input, extractor)
+    boundary_result = boundary_engine.evaluate(accepted_delta)
+    # memory_service.commit_pre_response_student_memory(student_id, accepted_delta)
+    # truth = memory_service.derive_current_truth(student_id)
+    # route_candidate = route_candidate_resolver.resolve(truth, None, {}, '')
+    pprint(boundary_result.to_json_dict())
     
 asyncio.run(run())

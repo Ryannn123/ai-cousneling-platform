@@ -1,7 +1,31 @@
 from __future__ import annotations
 
-from .contracts import BoundaryResult, JsonObject, TurnInput
-from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals
+from dataclasses import dataclass, field, fields
+from typing import TYPE_CHECKING, Any
+from .schemas import BoundarySignal
+
+if TYPE_CHECKING:
+    from .semantic_delta import AcceptedSemanticDelta
+
+@dataclass(slots=True)
+class BoundaryResult:
+    finalZone: str
+    handoffStatus: str
+    allowedNextBehavior: str
+    detectedSignals: list[str] = field(default_factory=list)
+    requiredBoundaryRules: list[str] = field(default_factory=list)
+    aiBoundaryReason: str | None = None
+    triggerType: str | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            item.name: value
+            for item in fields(self)
+            if (value := getattr(self, item.name)) is not None
+        }
 
 
 BOUNDARY_RULES_BY_TYPE = {
@@ -26,62 +50,54 @@ REASONS_BY_TYPE = {
 
 
 class BoundaryEngine:
-    def evaluate(self, turn_input: TurnInput | JsonObject, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None) -> BoundaryResult:
-        return BoundaryResolver().resolve(accepted_semantic_delta)
-
-
-class BoundaryResolver:
-    def resolve(self, accepted_semantic_delta: AcceptedSemanticDeltaInput | None = None) -> BoundaryResult:
+    def evaluate(self, accepted_semantic_delta: AcceptedSemanticDelta) -> BoundaryResult:
         signals = [
-            signal for signal in accepted_runtime_only_signals(accepted_semantic_delta)
-            if signal.get("kind") == "boundary"
+            signal for signal in accepted_semantic_delta.accepted_runtime_only_signals if signal.kind == "boundary"
         ]
-        red = next((signal for signal in signals if signal.get("severityCandidate") == "red" or signal.get("recommendedBehavior") == "handoff"), None)
+        
+        red = next((signal for signal in signals if signal.severityCandidate == "red" or signal.recommendedBehavior == "handoff"), None)
         if red:
-            return self.red_result(red, signals)
-        yellow = next((signal for signal in signals if signal.get("type") == "ambiguous_proceed_language" or signal.get("recommendedBehavior") == "clarify_once"), None)
+            return BoundaryResult(
+                finalZone="red",
+                handoffStatus="required",
+                triggerType=red.triggerType or "H1",
+                detectedSignals=detected_signals(signals),
+                aiBoundaryReason=reason_for_signal(red, "Student is asking for a red-zone official next step."),
+                requiredBoundaryRules=rules_for(signals),
+                allowedNextBehavior="handoff",
+            )
+
+        
+        yellow = next((signal for signal in signals if signal.type == "ambiguous_proceed_language" or signal.recommendedBehavior == "clarify_once"), None)
         if yellow:
-            return BoundaryResult.model_validate({
-                "finalZone": "yellow",
-                "handoffStatus": "possible_clarify",
-                "detectedSignals": detected_signals(signals),
-                "aiBoundaryReason": reason_for_signal(yellow, "Boundary-sensitive ambiguity requires clarification."),
-                "requiredBoundaryRules": rules_for(signals),
-                "allowedNextBehavior": "clarify",
-            })
-        return BoundaryResult.model_validate({
-            "finalZone": "green",
-            "handoffStatus": "none",
-            "detectedSignals": detected_signals(signals),
-            "requiredBoundaryRules": ["no-official-action-boundary"],
-            "allowedNextBehavior": "continue",
-        })
+            return BoundaryResult(
+                finalZone="yellow",
+                handoffStatus="possible_clarify",
+                detectedSignals=detected_signals(signals),
+                aiBoundaryReason=reason_for_signal(yellow, "Boundary-sensitive ambiguity requires clarification."),
+                requiredBoundaryRules=rules_for(signals),
+                allowedNextBehavior="clarify",
+            )
+            
+        return BoundaryResult(
+            finalZone="green",
+            handoffStatus="none",
+            detectedSignals=detected_signals(signals),
+            requiredBoundaryRules=["no-official-action-boundary"],
+            allowedNextBehavior="continue",
+        )
+        
 
-    def red_result(self, signal: JsonObject, all_signals: list[JsonObject]) -> BoundaryResult:
-        return BoundaryResult.model_validate({
-            "finalZone": "red",
-            "handoffStatus": "required",
-            "triggerType": signal.get("triggerType") or "H1",
-            "detectedSignals": detected_signals(all_signals),
-            "aiBoundaryReason": reason_for_signal(signal, "Student is asking for a red-zone official next step."),
-            "requiredBoundaryRules": rules_for(all_signals),
-            "allowedNextBehavior": "handoff",
-        })
+def detected_signals(signals: list[BoundarySignal]) -> list[str]:
+    return list(dict.fromkeys(signal.type for signal in signals))
 
 
-def detected_signals(signals: list[JsonObject]) -> list[str]:
-    return list(dict.fromkeys(signal_type for signal in signals if isinstance((signal_type := signal.get("type")), str)))
-
-
-def rules_for(signals: list[JsonObject]) -> list[str]:
+def rules_for(signals: list[BoundarySignal]) -> list[str]:
     rules = ["no-official-action-boundary"]
     for signal in signals:
-        signal_type = signal.get("type")
-        if isinstance(signal_type, str):
-            rules.extend(BOUNDARY_RULES_BY_TYPE.get(signal_type, []))
+        rules.extend(BOUNDARY_RULES_BY_TYPE.get(signal.type, []))
     return list(dict.fromkeys(rules))
 
 
-def reason_for_signal(signal: JsonObject, default: str) -> str:
-    signal_type = signal.get("type")
-    return REASONS_BY_TYPE.get(signal_type, default) if isinstance(signal_type, str) else default
+def reason_for_signal(signal: BoundarySignal, default: str) -> str:
+    return REASONS_BY_TYPE.get(signal.type, default)

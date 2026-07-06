@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from .contracts import ActiveRouteEpisode, BoundaryResult, JsonObject, TurnInput
+from .contracts import ActiveRouteEpisode, JsonObject, TurnInput
+from .boundary import BoundaryResult
 from .current_truth_schema import CurrentTruthProjection
 from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals
 
@@ -17,20 +18,20 @@ def build_operating_context(
     has_ambiguity = any(signal.get("kind") == "ambiguity" for signal in runtime_signals)
     primary_action = (
         "clarify_ambiguity"
-        if has_ambiguity and boundary_result.get("allowedNextBehavior") == "continue"
+        if has_ambiguity and boundary_result.allowedNextBehavior == "continue"
         else action_from_route(boundary_result, active_route_episode)
     )
     posture = next((signal.get("posture") for signal in runtime_signals if signal.get("kind") == "student_posture"), None)
     posture = posture or posture_from_route(active_route_episode)
     mode = response_mode_from_route(boundary_result, active_route_episode, posture, has_ambiguity)
     context = {
-        "currentZone": boundary_result.get("finalZone"),
-        "boundary": boundary_result,
+        "currentZone": boundary_result.finalZone,
+        "boundary": boundary_result.to_json_dict(),
         "activeRouteEpisode": active_route_episode,
         "primaryCounselingAction": primary_action,
         "recommendationReadiness": current_truth.readiness.recommendation_level,
         "preferenceStrength": current_truth.preference.strength,
-        "handoffStatus": boundary_result.get("handoffStatus"),
+        "handoffStatus": boundary_result.handoffStatus,
         "currentTruth": current_truth_summary(current_truth),
         "studentPosture": posture,
         "decisionSupportMode": decision_support_mode(active_route_episode),
@@ -46,10 +47,10 @@ def build_operating_context(
     return context
 
 
-def action_from_route(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> str:
-    if boundary_result.get("allowedNextBehavior") == "handoff":
+def action_from_route(boundary_result: BoundaryResult, route: ActiveRouteEpisode | JsonObject) -> str:
+    if boundary_result.allowedNextBehavior == "handoff":
         return "prepare_handoff"
-    if boundary_result.get("allowedNextBehavior") == "clarify":
+    if boundary_result.allowedNextBehavior == "clarify":
         return "clarify_ambiguity"
     if route.get("progressState") == "detour_resume":
         return "answer_detour"
@@ -66,10 +67,10 @@ def action_from_route(boundary_result: BoundaryResult | JsonObject, route: Activ
     return "explore_route"
 
 
-def response_mode_from_route(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject, posture: str | None, has_ambiguity: bool = False) -> str:
-    if boundary_result.get("allowedNextBehavior") == "handoff":
+def response_mode_from_route(boundary_result: BoundaryResult, route: ActiveRouteEpisode | JsonObject, posture: str | None, has_ambiguity: bool = False) -> str:
+    if boundary_result.allowedNextBehavior == "handoff":
         return "handoff_safe"
-    if boundary_result.get("allowedNextBehavior") == "clarify" or has_ambiguity:
+    if boundary_result.allowedNextBehavior == "clarify" or has_ambiguity:
         return "clarify_once"
     if route.get("progressState") == "confirmed_preference":
         return "milestone_confirmation"
@@ -103,10 +104,10 @@ def decision_support_mode(route: ActiveRouteEpisode | JsonObject) -> str | None:
     return None
 
 
-def next_best_move(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> str:
-    if boundary_result.get("allowedNextBehavior") == "handoff":
+def next_best_move(boundary_result: BoundaryResult, route: ActiveRouteEpisode | JsonObject) -> str:
+    if boundary_result.allowedNextBehavior == "handoff":
         return "Prepare handoff without completing any official action."
-    if boundary_result.get("allowedNextBehavior") == "clarify":
+    if boundary_result.allowedNextBehavior == "clarify":
         return "Clarify whether the student means counseling preference or official action."
     moves = {
         "detour_resume": "Answer factual detour with known facts or caveats, then resume the active route.",
@@ -119,10 +120,10 @@ def next_best_move(boundary_result: BoundaryResult | JsonObject, route: ActiveRo
     return moves.get(progress_state if isinstance(progress_state, str) else "", default_move(route))
 
 
-def validation_requirements(boundary_result: BoundaryResult | JsonObject, route: ActiveRouteEpisode | JsonObject) -> list[str]:
+def validation_requirements(boundary_result: BoundaryResult, route: ActiveRouteEpisode | JsonObject) -> list[str]:
     return [
         "official_action_boundary",
-        *(["handoff_safe_response"] if boundary_result.get("allowedNextBehavior") == "handoff" else []),
+        *(["handoff_safe_response"] if boundary_result.allowedNextBehavior == "handoff" else []),
         *(["route_outcome_validation"] if route.get("routeOutcomeCandidate") else []),
         *(["route_transition_validation"] if route.get("transitionDecision", {}).get("requiresValidation") else []),
     ]

@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from .contracts import (
     ActiveRouteEpisode,
-    BoundaryResult,
     CommitResult,
     ConversationState,
     JsonObject,
@@ -13,6 +12,7 @@ from .contracts import (
     SkillSelection,
     ValidationResult,
 )
+from .boundary import BoundaryResult
 from .memory import MemoryCommitResult
 from .schemas import AIExecutionResult, SemanticDeltaResult
 from .semantic_delta import AcceptedSemanticDeltaInput, accepted_runtime_only_signals, accepted_semantic_delta_json
@@ -101,7 +101,7 @@ def build_turn_audit_payload(
     return {
         "conversationId": conversation_id,
         "studentMessage": student_message,
-        "boundaryResult": boundary_result,
+        "boundaryResult": boundary_result.to_json_dict(),
         "operatingContextBefore": previous_state.get("operatingContext"),
         "operatingContextAfter": commit_result["committedContext"],
         "skillSelection": skill_selection,

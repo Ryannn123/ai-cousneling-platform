@@ -4,7 +4,8 @@ from typing import Any, KeysView, ValuesView, ItemsView, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .schemas import AIExecutionResult, SemanticDeltaResult
+from .schemas import AIExecutionResult, SemanticDeltaResult, RouteType
+from .boundary import BoundaryResult
 
 
 JsonObject = dict[str, Any]
@@ -70,16 +71,6 @@ class ConversationState(RuntimeModel):
     auditEvents: list[JsonObject] | None = None
 
 
-class BoundaryResult(RuntimeModel):
-    finalZone: str
-    handoffStatus: str
-    detectedSignals: list[str] = Field(default_factory=list)
-    requiredBoundaryRules: list[str] = Field(default_factory=list)
-    allowedNextBehavior: str
-    aiBoundaryReason: str | None = None
-    triggerType: str | None = None
-
-
 class SkillRef(RuntimeModel):
     name: str
     version: str
@@ -130,19 +121,54 @@ class ExecutionClient(Protocol):
         ...
 
 
+class RouteSource(RuntimeModel):
+    derivedFromCurrentTruth: bool = False
+    usedAcceptedSemanticDelta: bool = False
+    usedPriorOperatingContext: bool = False
+    usedBoundaryResult: bool = False
+    usedRouteOutcomeHistory: bool = False
+
+
+class RouteTransitionDecision(RuntimeModel):
+    decision: str
+    priority: str
+    activeRoute: str
+    progressState: str
+    previousRoute: str | None = None
+    routeOutcome: str | None = None
+    nextRouteCandidate: str | None = None
+    resumeRouteCandidate: str | None = None
+    evidence: list[JsonObject] = Field(default_factory=list)
+    requiresValidation: bool = False
+    auditReason: str | None = None
+
+
+class RouteTransitionValidation(RuntimeModel):
+    status: str
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RouteDetourOverlay(RuntimeModel):
+    detourKind: str
+    resumeRoute: str
+    resumeProgressState: str
+    discoveredSignals: list[str] = Field(default_factory=list)
+
+
 class RouteCandidate(RuntimeModel):
-    routeType: str
+    routeType: RouteType
     routeGoal: str
     evidence: list[JsonObject] = Field(default_factory=list)
-    source: JsonObject = Field(default_factory=dict)
+    source: RouteSource = Field(default_factory=RouteSource)
     auditReason: str | None = None
 
 
 class ActiveRouteEpisode(RuntimeModel):
-    routeType: str
+    routeType: RouteType
     routeGoal: str
     progressState: str
-    transitionDecision: JsonObject
+    transitionDecision: RouteTransitionDecision
     recommendationReadiness: str
     preferenceStrength: str
     activeDirections: JsonObject = Field(default_factory=dict)
@@ -151,9 +177,9 @@ class ActiveRouteEpisode(RuntimeModel):
     routeOutcomeCandidate: str | None = None
     nextRouteCandidate: str | None = None
     resumeRouteCandidate: str | None = None
-    detourOverlay: JsonObject | None = None
-    transitionValidation: JsonObject | None = None
-    source: JsonObject = Field(default_factory=dict)
+    detourOverlay: RouteDetourOverlay | None = None
+    transitionValidation: RouteTransitionValidation | None = None
+    source: RouteSource = Field(default_factory=RouteSource)
 
 
 class ValidationResult(RuntimeModel):

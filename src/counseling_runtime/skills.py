@@ -7,7 +7,8 @@ from pathlib import Path
 import yaml
 
 from .constants import MANDATORY_BOUNDARY_RULES
-from .contracts import BoundaryResult, JsonObject, SkillSelection
+from .contracts import JsonObject, SkillSelection
+from .boundary import BoundaryResult
 from .settings import SKILLS_DIR
 
 
@@ -66,13 +67,13 @@ class SkillControlService:
             loaded.append(parsed)
         return {"loaded": loaded, "rejected": rejected}
 
-    def select(self, operating_context: JsonObject, boundary_result: BoundaryResult | JsonObject) -> SkillSelection:
+    def select(self, operating_context: JsonObject, boundary_result: BoundaryResult) -> SkillSelection:
         inventory = self.get_skill_inventory()
         rejected_candidates = [{"skill": item["skill"], "reason": item["reason"]} for item in inventory["rejected"]]
         primary_action = operating_context.get("primaryCounselingAction")
         runtime_skill_name = (
             "ready-to-register-handoff"
-            if boundary_result.get("allowedNextBehavior") == "handoff"
+            if boundary_result.allowedNextBehavior == "handoff"
             else ACTION_TO_SKILL.get(primary_action if isinstance(primary_action, str) else "", "interest-exploration")
         )
 
@@ -82,7 +83,7 @@ class SkillControlService:
         progress_state = route.get("progressState")
         playbook_name = PROGRESS_TO_PLAYBOOK.get(progress_state if isinstance(progress_state, str) else "")
         selected_playbook = find_compatible(inventory["loaded"], playbook_name, "playbook", operating_context, rejected_candidates, True) if playbook_name else None
-        required_rules = boundary_result.get("requiredBoundaryRules", [])
+        required_rules = boundary_result.requiredBoundaryRules
         boundary_rule_names = [
             name
             for name in dict.fromkeys([*MANDATORY_BOUNDARY_RULES, *(required_rules if isinstance(required_rules, list) else [])])

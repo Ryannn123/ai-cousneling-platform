@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from .contracts import JsonObject
 from .memory_payloads import RouteOutcome
-from .schemas import Confidence
+from .schemas import Confidence, RouteType
 
 
 @dataclass(slots=True, frozen=True)
@@ -71,7 +71,7 @@ class HandoffReadinessFact:
 @dataclass(slots=True, frozen=True)
 class RouteOutcomeFact:
     outcome: RouteOutcome
-    route_type: str | None
+    route_type: RouteType | None
     next_route_candidate: str | None
     value: JsonObject
     source: FactSource

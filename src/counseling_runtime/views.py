@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from .contracts import ActiveRouteEpisode, BoundaryResult, ExecutionContext, JsonObject, KnowledgeAnswer, SkillSelection, TurnInput
+from .contracts import ActiveRouteEpisode, ExecutionContext, JsonObject, KnowledgeAnswer, SkillSelection, TurnInput
 from .current_truth_schema import CurrentTruthProjection, DirectionOption, SupportingValue
+from .boundary import BoundaryResult
 
 
 def current_truth_for_extraction(current_truth: CurrentTruthProjection) -> JsonObject:
@@ -77,10 +78,10 @@ def route_episode_for_response(route: ActiveRouteEpisode | JsonObject | None) ->
     }
 
 
-def behavior_for_boundary(boundary_result: BoundaryResult | JsonObject) -> str:
-    if boundary_result.get("allowedNextBehavior") == "handoff":
+def behavior_for_boundary(boundary_result: BoundaryResult) -> str:
+    if boundary_result.allowedNextBehavior == "handoff":
         return "prepare_handoff"
-    if boundary_result.get("allowedNextBehavior") == "clarify":
+    if boundary_result.allowedNextBehavior == "clarify":
         return "ask_clarification"
     return "continue_normal_counseling"
 
@@ -106,9 +107,9 @@ def build_execution_context(
             "studentPosture": operating_context.get("studentPosture"),
             "decisionSupportMode": operating_context.get("decisionSupportMode"),
             "nextBestCounselingMove": operating_context.get("nextBestCounselingMove"),
-            "zone": boundary_result.get("finalZone"),
-            "triggerType": boundary_result.get("triggerType"),
-            "boundaryReason": boundary_result.get("aiBoundaryReason"),
+            "zone": boundary_result.finalZone,
+            "triggerType": boundary_result.triggerType,
+            "boundaryReason": boundary_result.aiBoundaryReason,
             "handoffStatus": operating_context.get("handoffStatus"),
         },
         "skill": {

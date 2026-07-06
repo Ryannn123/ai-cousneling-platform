@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,15 @@ def read_audit_events(conversation_id: str, limit: int = 50) -> list[dict[str, A
 def jsonable(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump(exclude_none=True)
+    to_json_dict = getattr(value, "to_json_dict", None)
+    if callable(to_json_dict):
+        return jsonable(to_json_dict())
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: jsonable(item_value)
+            for item in fields(value)
+            if (item_value := getattr(value, item.name)) is not None
+        }
     if isinstance(value, list):
         return [jsonable(item) for item in value]
     if isinstance(value, dict):

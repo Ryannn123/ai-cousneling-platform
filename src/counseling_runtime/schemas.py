@@ -228,7 +228,7 @@ class AmbiguitySignal(RuntimeSignalBase):
     newClaim: AmbiguityClaim | None = None
 
 
-RouteType = Literal[
+type RouteType = Literal[
     "initial_route_selection",
     "course_exploration",
     "university_exploration",

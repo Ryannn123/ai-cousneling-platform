@@ -6,7 +6,7 @@ from typing import Any
 
 from .contracts import JsonObject
 from .memory_validation import DurableMemoryEvent
-from .schemas import Confidence
+from .schemas import Confidence, RouteType
 
 
 @dataclass(slots=True)
@@ -282,7 +282,7 @@ class RouteOutcomeItem:
 
 @dataclass(slots=True)
 class RouteHistoryProjection:
-    latest_outcome_by_route: dict[str, RouteOutcomeItem] = field(default_factory=dict)
+    latest_outcome_by_route: dict[RouteType, RouteOutcomeItem] = field(default_factory=dict)
     outcomes: list[RouteOutcomeItem] = field(default_factory=list)
     deferrals: list[RouteOutcomeItem] = field(default_factory=list)
     switches: list[RouteOutcomeItem] = field(default_factory=list)

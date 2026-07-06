@@ -94,10 +94,12 @@ class CounselingTurnOrchestrator:
         accepted_semantic_delta = self.semantic_delta_validator.validate(raw_semantic_delta, turn_input, self.ai_semantic_delta_extractor)
         
         pre_response_memory_commit_result = self.memory_state_service.commit_pre_response_student_memory(student_id, accepted_semantic_delta)
+        
+        boundary_result = self.boundary_engine.evaluate(accepted_semantic_delta)
+        
         current_truth = self.memory_state_service.derive_current_truth(student_id)
         
         route_candidate = self.route_episode_candidate_resolver.resolve(current_truth, accepted_semantic_delta, previous_state.get("operatingContext"), student_message)
-        boundary_result = self.boundary_engine.evaluate(turn_input, accepted_semantic_delta)
         active_route_episode = self.route_episode_planner.plan(boundary_result, route_candidate, current_truth, accepted_semantic_delta, previous_state.get("operatingContext"), student_message)
         
         operating_context = build_operating_context(previous_state, turn_input, boundary_result, accepted_semantic_delta, current_truth, active_route_episode)

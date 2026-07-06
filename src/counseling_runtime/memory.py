@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from .contracts import BoundaryResult, JsonObject, SkillSelection, ValidationResult
+from .contracts import JsonObject, SkillSelection, ValidationResult
+from .boundary import BoundaryResult
 from .current_truth import CurrentTruthProjector
 from .current_truth_schema import CurrentTruthProjection
-from .memory_payloads import HandoffReadinessPayload, MemoryEventPayload, RecommendationInteractionPayload, RouteOutcomePayload, optional_str, route_outcome
+from .memory_payloads import HandoffReadinessPayload, MemoryEventPayload, RecommendationInteractionPayload, RouteOutcomePayload, optional_str, route_outcome, route_type
 from .memory_store import MemoryEventStore
 from .memory_validation import MemoryEventDraft, MemoryEventSource, MemoryEventValidator
 from .safety import contains_official_truth
@@ -100,12 +101,12 @@ class MemoryStateService:
         accepted_semantic_delta: AcceptedSemanticDelta,
         validated_ai_output: AIExecutionResult | JsonObject,
         validation_result: ValidationResult | JsonObject,
-        final_boundary_result: BoundaryResult | JsonObject,
+        final_boundary_result: BoundaryResult,
         selected_skill_context: SkillSelection | JsonObject,
     ) -> MemoryCommitResult:
         ai_output_json = validated_ai_output.model_dump(exclude_none=True) if isinstance(validated_ai_output, AIExecutionResult) else validated_ai_output
         validation_json = validation_result.to_json_dict() if isinstance(validation_result, ValidationResult) else validation_result
-        boundary_json = final_boundary_result.to_json_dict() if isinstance(final_boundary_result, BoundaryResult) else final_boundary_result
+        boundary_json = final_boundary_result.to_json_dict()
         skill_json = selected_skill_context.to_json_dict() if isinstance(selected_skill_context, SkillSelection) else selected_skill_context
         if validation_json.get("status") not in {"accepted", "downgraded", "blocked", "clarify", "handoff_override"}:
             return empty_commit_result()
@@ -303,7 +304,7 @@ def payload_for_output(output: JsonObject, selected_skill_context: JsonObject) -
             type="route_outcome",
             outcome=outcome,
             status=outcome,
-            route_type=optional_str(value.get("routeType")),
+            route_type=route_type(value.get("routeType")),
             progress_state=optional_str(value.get("progressState")),
             previous_route=optional_str(value.get("previousRoute")),
             next_route_candidate=optional_str(value.get("nextRouteCandidate")),
